@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.36'
+$script:appVersion = 'v2.37'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -1670,6 +1670,43 @@ function Write-FrpcConfig {
     Set-Content -LiteralPath $Path -Value $lines -Encoding ASCII
 }
 
+function Sync-FrpcGamePort {
+    param([int]$Port)
+    $cfg = $script:frpcCfg
+    if (-not $cfg -and $script:serverDir) { $cfg = Join-Path $script:serverDir 'frpc.toml' }
+    if (-not $cfg -or -not (Test-Path -LiteralPath $cfg)) { return $false }
+    $lines = @(Get-Content -LiteralPath $cfg -Encoding UTF8)
+    $inTcp = $false
+    $changed = $false
+    $newLines = @()
+    foreach ($line in $lines) {
+        if ($line -match '^\s*\[\[proxies\]\]') {
+            $inTcp = $false
+            $newLines += $line
+            continue
+        }
+        if ($line -match '^\s*name\s*=\s*"mc-tcp"') {
+            $inTcp = $true
+            $newLines += $line
+            continue
+        }
+        if ($line -match '^\s*name\s*=\s*"') { $inTcp = $false }
+        if ($inTcp -and $line -match '^\s*localPort\s*=') {
+            $newLines += "localPort = $Port"
+            $changed = $true
+            continue
+        }
+        if ($inTcp -and $line -match '^\s*remotePort\s*=') {
+            $newLines += "remotePort = $Port"
+            $changed = $true
+            continue
+        }
+        $newLines += $line
+    }
+    if ($changed) { Set-Content -LiteralPath $cfg -Value $newLines -Encoding ASCII }
+    return $changed
+}
+
 function Deploy-FromScratch {
     param([string]$ZipPath, [string]$DestDir, [bool]$UseFrp, [string]$FrpIp, [string]$FrpPort, [string]$FrpToken, [int]$GamePort, [int]$VoicePort)
 
@@ -2256,7 +2293,7 @@ function New-MainForm {
     $panelConfig.Controls.Add($btnEditProps)
     $y += 44
     $lblConfigTip = New-Object System.Windows.Forms.Label
-    $lblConfigTip.Text = '提示：配置保存后需要重启服务器才生效。'
+    $lblConfigTip.Text = '提示：配置保存后需要重启服务器才生效；修改"服务器端口"会自动同步 frpc.toml（需重启穿透，玩家地址变为 云服务器IP:新端口）。'
     $lblConfigTip.Location = [System.Drawing.Point]::new(20, $y)
     $lblConfigTip.Size = [System.Drawing.Size]::new(600, 22)
     $lblConfigTip.ForeColor = [System.Drawing.Color]::Gray
@@ -3067,7 +3104,19 @@ function New-MainForm {
             'broadcast-console-to-ops' = if ($script:chkBroadcastOps.Checked) { 'true' } else { 'false' }
         }
         Update-PropertyFile -FilePath (Join-Path $script:serverDir 'server.properties') -Changes $changes
-        [System.Windows.Forms.MessageBox]::Show('配置已保存，重启服务器后生效。', '完成') | Out-Null
+        $portChanged = $false
+        try {
+            $oldPort = Get-ServerPort
+            $newPort = [int]$script:txtPort.Text.Trim()
+            if ($newPort -ne $oldPort) {
+                $portChanged = Sync-FrpcGamePort -Port $newPort
+            }
+        } catch { }
+        if ($portChanged) {
+            [System.Windows.Forms.MessageBox]::Show("配置已保存，重启服务器后生效。`r`n服务器端口已改为 $($script:txtPort.Text.Trim())，frpc.toml 已同步（需重启穿透，玩家连接地址变为 云服务器IP:$($script:txtPort.Text.Trim())）。", '完成') | Out-Null
+        } else {
+            [System.Windows.Forms.MessageBox]::Show('配置已保存，重启服务器后生效。', '完成') | Out-Null
+        }
         Save-Settings
     })
     $btnEditProps.Add_Click({
