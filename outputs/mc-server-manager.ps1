@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.38'
+$script:appVersion = 'v2.39'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -1394,7 +1394,12 @@ function Load-QuickConfigFromServer {
     if ($script:comboDiff.Items.Contains($diff)) { $script:comboDiff.SelectedItem = $diff } else { $script:comboDiff.SelectedIndex = 0 }
     $gm = (& $get 'gamemode').Trim()
     if ($script:comboGm.Items.Contains($gm)) { $script:comboGm.SelectedItem = $gm } else { $script:comboGm.SelectedIndex = 0 }
-    $script:txtPort.Text = (& $get 'server-port').Trim()
+    if ($script:txtGamePort) { $script:txtGamePort.Text = (& $get 'server-port').Trim() }
+    if ($script:txtFrpPort) {
+        $p = Get-FrpcPorts
+        $script:txtFrpPort.Text = "$($p.FrpPort)"
+        $script:txtVoicePort.Text = "$($p.VoicePort)"
+    }
     $script:txtMotd.Text = (& $get 'motd').Trim()
     $script:txtMaxPlayers.Text = (& $get 'max-players').Trim()
     $script:chkPvp.Checked = ((& $get 'pvp').Trim() -eq 'true')
@@ -2196,6 +2201,54 @@ function New-MainForm {
     $tabMain.Controls.Add($btnGenBat)
     $y += 40
 
+    $lblPorts = New-Object System.Windows.Forms.Label
+    $lblPorts.Text = '端口设置:'
+    $lblPorts.Location = [System.Drawing.Point]::new(20, $y + 3)
+    $lblPorts.Size = [System.Drawing.Size]::new(70, 22)
+    $tabMain.Controls.Add($lblPorts)
+    $lblGamePort = New-Object System.Windows.Forms.Label
+    $lblGamePort.Text = '游戏:'
+    $lblGamePort.Location = [System.Drawing.Point]::new(95, $y + 3)
+    $lblGamePort.Size = [System.Drawing.Size]::new(40, 22)
+    $tabMain.Controls.Add($lblGamePort)
+    $script:txtGamePort = New-Object System.Windows.Forms.TextBox
+    $script:txtGamePort.Text = '25565'
+    $script:txtGamePort.Location = [System.Drawing.Point]::new(135, $y)
+    $script:txtGamePort.Size = [System.Drawing.Size]::new(60, 22)
+    $tabMain.Controls.Add($script:txtGamePort)
+    $lblFrpPort = New-Object System.Windows.Forms.Label
+    $lblFrpPort.Text = 'frp:'
+    $lblFrpPort.Location = [System.Drawing.Point]::new(210, $y + 3)
+    $lblFrpPort.Size = [System.Drawing.Size]::new(40, 22)
+    $tabMain.Controls.Add($lblFrpPort)
+    $script:txtFrpPort = New-Object System.Windows.Forms.TextBox
+    $script:txtFrpPort.Text = '7000'
+    $script:txtFrpPort.Location = [System.Drawing.Point]::new(250, $y)
+    $script:txtFrpPort.Size = [System.Drawing.Size]::new(60, 22)
+    $tabMain.Controls.Add($script:txtFrpPort)
+    $lblVoicePort = New-Object System.Windows.Forms.Label
+    $lblVoicePort.Text = '语音:'
+    $lblVoicePort.Location = [System.Drawing.Point]::new(325, $y + 3)
+    $lblVoicePort.Size = [System.Drawing.Size]::new(40, 22)
+    $tabMain.Controls.Add($lblVoicePort)
+    $script:txtVoicePort = New-Object System.Windows.Forms.TextBox
+    $script:txtVoicePort.Text = '24454'
+    $script:txtVoicePort.Location = [System.Drawing.Point]::new(365, $y)
+    $script:txtVoicePort.Size = [System.Drawing.Size]::new(60, 22)
+    $tabMain.Controls.Add($script:txtVoicePort)
+    $btnSavePorts = New-Object System.Windows.Forms.Button
+    $btnSavePorts.Text = '保存端口'
+    $btnSavePorts.Location = [System.Drawing.Point]::new(445, $y - 1)
+    $btnSavePorts.Size = [System.Drawing.Size]::new(100, 26)
+    $tabMain.Controls.Add($btnSavePorts)
+    $lblPortsTip = New-Object System.Windows.Forms.Label
+    $lblPortsTip.Text = '保存后需重启服务器与穿透；frp 端口需同步云服务器 frps.toml'
+    $lblPortsTip.Location = [System.Drawing.Point]::new(555, $y + 3)
+    $lblPortsTip.Size = [System.Drawing.Size]::new(420, 22)
+    $lblPortsTip.ForeColor = [System.Drawing.Color]::Gray
+    $tabMain.Controls.Add($lblPortsTip)
+    $y += 40
+
     $btnStart = New-Object System.Windows.Forms.Button
     $btnStart.Text = '启动服务器'
     $btnStart.Location = [System.Drawing.Point]::new(115, $y)
@@ -2301,17 +2354,6 @@ function New-MainForm {
     $script:comboGm.Location = [System.Drawing.Point]::new(135, $y)
     $script:comboGm.Size = [System.Drawing.Size]::new(140, 22)
     $panelConfig.Controls.Add($script:comboGm)
-    $y += 34
-
-    $lblPort = New-Object System.Windows.Forms.Label
-    $lblPort.Text = '服务器端口:'
-    $lblPort.Location = [System.Drawing.Point]::new(20, $y + 3)
-    $lblPort.Size = [System.Drawing.Size]::new(110, 22)
-    $panelConfig.Controls.Add($lblPort)
-    $script:txtPort = New-Object System.Windows.Forms.TextBox
-    $script:txtPort.Location = [System.Drawing.Point]::new(135, $y)
-    $script:txtPort.Size = [System.Drawing.Size]::new(140, 22)
-    $panelConfig.Controls.Add($script:txtPort)
     $y += 34
 
     $lblMotd = New-Object System.Windows.Forms.Label
@@ -2773,37 +2815,6 @@ function New-MainForm {
     $lblFrpTip.Size = [System.Drawing.Size]::new(550, 22)
     $lblFrpTip.ForeColor = [System.Drawing.Color]::Gray
     $panelFrp.Controls.Add($lblFrpTip)
-    $lblFrpPort = New-Object System.Windows.Forms.Label
-    $lblFrpPort.Text = 'frp 端口:'
-    $lblFrpPort.Location = [System.Drawing.Point]::new(10, 118)
-    $lblFrpPort.Size = [System.Drawing.Size]::new(80, 22)
-    $panelFrp.Controls.Add($lblFrpPort)
-    $script:txtFrpPort = New-Object System.Windows.Forms.TextBox
-    $script:txtFrpPort.Text = '7000'
-    $script:txtFrpPort.Location = [System.Drawing.Point]::new(95, 116)
-    $script:txtFrpPort.Size = [System.Drawing.Size]::new(70, 22)
-    $panelFrp.Controls.Add($script:txtFrpPort)
-    $lblVoicePort = New-Object System.Windows.Forms.Label
-    $lblVoicePort.Text = '语音端口:'
-    $lblVoicePort.Location = [System.Drawing.Point]::new(190, 118)
-    $lblVoicePort.Size = [System.Drawing.Size]::new(70, 22)
-    $panelFrp.Controls.Add($lblVoicePort)
-    $script:txtVoicePort = New-Object System.Windows.Forms.TextBox
-    $script:txtVoicePort.Text = '24454'
-    $script:txtVoicePort.Location = [System.Drawing.Point]::new(265, 116)
-    $script:txtVoicePort.Size = [System.Drawing.Size]::new(70, 22)
-    $panelFrp.Controls.Add($script:txtVoicePort)
-    $btnSavePorts = New-Object System.Windows.Forms.Button
-    $btnSavePorts.Text = '保存端口配置'
-    $btnSavePorts.Location = [System.Drawing.Point]::new(355, 114)
-    $btnSavePorts.Size = [System.Drawing.Size]::new(130, 26)
-    $panelFrp.Controls.Add($btnSavePorts)
-    $lblPortTip = New-Object System.Windows.Forms.Label
-    $lblPortTip.Text = '保存后需重启服务器与穿透；frp 端口需同步云服务器 frps.toml'
-    $lblPortTip.Location = [System.Drawing.Point]::new(495, 118)
-    $lblPortTip.Size = [System.Drawing.Size]::new(420, 22)
-    $lblPortTip.ForeColor = [System.Drawing.Color]::Gray
-    $panelFrp.Controls.Add($lblPortTip)
 
     # ---------- 发送脚本页 ----------
     $tabSsh = New-Object System.Windows.Forms.TabPage
@@ -3182,7 +3193,6 @@ function New-MainForm {
         $changes = @{
             'difficulty'       = $script:comboDiff.SelectedItem
             'gamemode'         = $script:comboGm.SelectedItem
-            'server-port'      = $script:txtPort.Text.Trim()
             'motd'             = $script:txtMotd.Text.Trim()
             'max-players'      = $script:txtMaxPlayers.Text.Trim()
             'pvp'              = if ($script:chkPvp.Checked) { 'true' } else { 'false' }
@@ -3219,19 +3229,7 @@ function New-MainForm {
             'broadcast-console-to-ops' = if ($script:chkBroadcastOps.Checked) { 'true' } else { 'false' }
         }
         Update-PropertyFile -FilePath (Join-Path $script:serverDir 'server.properties') -Changes $changes
-        $portChanged = $false
-        try {
-            $oldPort = Get-ServerPort
-            $newPort = [int]$script:txtPort.Text.Trim()
-            if ($newPort -ne $oldPort) {
-                $portChanged = Sync-FrpcGamePort -Port $newPort
-            }
-        } catch { }
-        if ($portChanged) {
-            [System.Windows.Forms.MessageBox]::Show("配置已保存，重启服务器后生效。`r`n服务器端口已改为 $($script:txtPort.Text.Trim())，frpc.toml 已同步（需重启穿透，玩家连接地址变为 云服务器IP:$($script:txtPort.Text.Trim())）。", '完成') | Out-Null
-        } else {
-            [System.Windows.Forms.MessageBox]::Show('配置已保存，重启服务器后生效。', '完成') | Out-Null
-        }
+        [System.Windows.Forms.MessageBox]::Show('配置已保存，重启服务器后生效。（端口请到"总览 / 启动"页修改）', '完成') | Out-Null
         Save-Settings
     })
     $btnEditProps.Add_Click({
@@ -3378,15 +3376,28 @@ function New-MainForm {
             [System.Windows.Forms.MessageBox]::Show('请先在总览页选择服务器目录。', '提示') | Out-Null
             return
         }
+        $gamePort = 0
         $frpPort = 0
         $voicePort = 0
+        try { $gamePort = [int]$script:txtGamePort.Text.Trim() } catch { }
         try { $frpPort = [int]$script:txtFrpPort.Text.Trim() } catch { }
         try { $voicePort = [int]$script:txtVoicePort.Text.Trim() } catch { }
-        if ($frpPort -le 0 -or $frpPort -gt 65535 -or $voicePort -le 0 -or $voicePort -gt 65535) {
+        if ($gamePort -le 0 -or $gamePort -gt 65535 -or $frpPort -le 0 -or $frpPort -gt 65535 -or $voicePort -le 0 -or $voicePort -gt 65535) {
             [System.Windows.Forms.MessageBox]::Show('端口必须是 1~65535 的数字。', '提示') | Out-Null
             return
         }
         $msgs = @()
+        # 游戏端口：server.properties + frpc.toml mc-tcp
+        $oldGame = Get-ServerPort
+        if ($gamePort -ne $oldGame) {
+            Update-PropertyFile -FilePath (Join-Path $script:serverDir 'server.properties') -Changes @{ 'server-port' = "$gamePort" }
+            if (Sync-FrpcGamePort -Port $gamePort) {
+                $msgs += "游戏端口已改为 $gamePort（server.properties + frpc.toml 已同步）"
+            } else {
+                $msgs += "游戏端口已改为 $gamePort（未找到 frpc.toml，穿透未同步）"
+            }
+        }
+        # frp 端口：frpc.toml serverPort
         $oldPorts = Get-FrpcPorts
         if ($frpPort -ne $oldPorts.FrpPort) {
             if (Update-FrpcServerPort -Port $frpPort) {
@@ -3395,6 +3406,7 @@ function New-MainForm {
                 $msgs += 'frp 端口修改失败（未找到 frpc.toml）'
             }
         }
+        # 语音端口：frpc.toml mc-voice-udp + voicechat 配置
         if ($voicePort -ne $oldPorts.VoicePort) {
             $msgs += Update-VoicePort -Port $voicePort
         }
