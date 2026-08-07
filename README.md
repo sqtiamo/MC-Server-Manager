@@ -24,18 +24,18 @@ A single-file Windows app to deploy, start, and manage Minecraft servers (Fabric
 
 ### Quick start
 
-Option A — run the prebuilt `MCServerManager.exe` (no install needed).
+Option A — download the prebuilt `MCServerManager.exe` from the `outputs/` folder in this repo, double-click to run (no install needed).
 
-Option B — run from source:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File mc-server-manager.ps1
-```
-
-Rebuild the exe:
+Option B — build it yourself:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build-exe.ps1
+```
+
+Option C — run from source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File mc-server-manager.ps1
 ```
 
 ### Typical flow
@@ -91,18 +91,18 @@ For personal server management and learning. All mods / modpacks belong to their
 
 ### 快速开始
 
-方式一：直接双击 `MCServerManager.exe`（免安装）。
+方式一：从本仓库 `outputs/` 文件夹下载 `MCServerManager.exe`，直接双击运行（免安装）。
 
-方式二：从源码运行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File mc-server-manager.ps1
-```
-
-重新打包 exe：
+方式二：自己打包 exe：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build-exe.ps1
+```
+
+方式三：从源码运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File mc-server-manager.ps1
 ```
 
 ### 典型开服流程

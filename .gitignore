@@ -1,5 +1,6 @@
 # 编译产物 / 打包结果
 *.exe
+!MCServerManager.exe
 
 # 大型或运行时生成的文件
 server-mods.zip

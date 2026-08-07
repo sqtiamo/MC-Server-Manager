@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.37'
+$script:appVersion = 'v2.38'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -1707,6 +1707,90 @@ function Sync-FrpcGamePort {
     return $changed
 }
 
+function Get-FrpcPorts {
+    $cfg = $script:frpcCfg
+    if (-not $cfg -and $script:serverDir) { $cfg = Join-Path $script:serverDir 'frpc.toml' }
+    $frpPort = 7000
+    $voicePort = 24454
+    if ($cfg -and (Test-Path -LiteralPath $cfg)) {
+        $lines = @(Get-Content -LiteralPath $cfg -Encoding UTF8)
+        $inVoice = $false
+        foreach ($line in $lines) {
+            if ($line -match '^\s*\[\[proxies\]\]') { $inVoice = $false; continue }
+            if ($line -match '^\s*name\s*=\s*"mc-voice-udp"') { $inVoice = $true; continue }
+            if ($line -match '^\s*name\s*=\s*"') { $inVoice = $false }
+            if ($line -match '^\s*serverPort\s*=\s*(\d+)') { $frpPort = [int]$matches[1] }
+            if ($inVoice -and $line -match '^\s*localPort\s*=\s*(\d+)') { $voicePort = [int]$matches[1] }
+        }
+    }
+    return @{ FrpPort = $frpPort; VoicePort = $voicePort }
+}
+
+function Update-FrpcServerPort {
+    param([int]$Port)
+    $cfg = $script:frpcCfg
+    if (-not $cfg -and $script:serverDir) { $cfg = Join-Path $script:serverDir 'frpc.toml' }
+    if (-not $cfg -or -not (Test-Path -LiteralPath $cfg)) { return $false }
+    $lines = @(Get-Content -LiteralPath $cfg -Encoding UTF8)
+    $changed = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*serverPort\s*=') {
+            $lines[$i] = "serverPort = $Port"
+            $changed = $true
+            break
+        }
+    }
+    if ($changed) { Set-Content -LiteralPath $cfg -Value $lines -Encoding ASCII }
+    return $changed
+}
+
+function Update-VoicePort {
+    param([int]$Port)
+    $msgs = @()
+    $cfg = $script:frpcCfg
+    if (-not $cfg -and $script:serverDir) { $cfg = Join-Path $script:serverDir 'frpc.toml' }
+    if ($cfg -and (Test-Path -LiteralPath $cfg)) {
+        $lines = @(Get-Content -LiteralPath $cfg -Encoding UTF8)
+        $inVoice = $false
+        $changed = $false
+        $newLines = @()
+        foreach ($line in $lines) {
+            if ($line -match '^\s*\[\[proxies\]\]') { $inVoice = $false; $newLines += $line; continue }
+            if ($line -match '^\s*name\s*=\s*"mc-voice-udp"') { $inVoice = $true; $newLines += $line; continue }
+            if ($line -match '^\s*name\s*=\s*"') { $inVoice = $false }
+            if ($inVoice -and $line -match '^\s*localPort\s*=') { $newLines += "localPort = $Port"; $changed = $true; continue }
+            if ($inVoice -and $line -match '^\s*remotePort\s*=') { $newLines += "remotePort = $Port"; $changed = $true; continue }
+            $newLines += $line
+        }
+        if ($changed) {
+            Set-Content -LiteralPath $cfg -Value $newLines -Encoding ASCII
+            $msgs += "frpc.toml 语音转发已改为 $Port"
+        }
+    }
+    if ($script:serverDir) {
+        $vc = Join-Path $script:serverDir 'config\voicechat\voicechat-server.properties'
+        if (Test-Path -LiteralPath $vc) {
+            $vlines = @(Get-Content -LiteralPath $vc -Encoding UTF8)
+            $vchanged = $false
+            for ($i = 0; $i -lt $vlines.Count; $i++) {
+                if ($vlines[$i] -match '^\s*port\s*=') {
+                    $vlines[$i] = "port=$Port"
+                    $vchanged = $true
+                    break
+                }
+            }
+            if ($vchanged) {
+                Set-Content -LiteralPath $vc -Value $vlines -Encoding UTF8
+                $msgs += "voicechat-server.properties 已改为 $Port"
+            }
+        } else {
+            $msgs += '未找到 config\voicechat\voicechat-server.properties（仅同步了 frpc.toml，语音模组端口需自行确认）'
+        }
+    }
+    if ($msgs.Count -eq 0) { $msgs += '未找到 frpc.toml，未做任何修改' }
+    return ($msgs -join "`r`n")
+}
+
 function Deploy-FromScratch {
     param([string]$ZipPath, [string]$DestDir, [bool]$UseFrp, [string]$FrpIp, [string]$FrpPort, [string]$FrpToken, [int]$GamePort, [int]$VoicePort)
 
@@ -2689,6 +2773,37 @@ function New-MainForm {
     $lblFrpTip.Size = [System.Drawing.Size]::new(550, 22)
     $lblFrpTip.ForeColor = [System.Drawing.Color]::Gray
     $panelFrp.Controls.Add($lblFrpTip)
+    $lblFrpPort = New-Object System.Windows.Forms.Label
+    $lblFrpPort.Text = 'frp 端口:'
+    $lblFrpPort.Location = [System.Drawing.Point]::new(10, 118)
+    $lblFrpPort.Size = [System.Drawing.Size]::new(80, 22)
+    $panelFrp.Controls.Add($lblFrpPort)
+    $script:txtFrpPort = New-Object System.Windows.Forms.TextBox
+    $script:txtFrpPort.Text = '7000'
+    $script:txtFrpPort.Location = [System.Drawing.Point]::new(95, 116)
+    $script:txtFrpPort.Size = [System.Drawing.Size]::new(70, 22)
+    $panelFrp.Controls.Add($script:txtFrpPort)
+    $lblVoicePort = New-Object System.Windows.Forms.Label
+    $lblVoicePort.Text = '语音端口:'
+    $lblVoicePort.Location = [System.Drawing.Point]::new(190, 118)
+    $lblVoicePort.Size = [System.Drawing.Size]::new(70, 22)
+    $panelFrp.Controls.Add($lblVoicePort)
+    $script:txtVoicePort = New-Object System.Windows.Forms.TextBox
+    $script:txtVoicePort.Text = '24454'
+    $script:txtVoicePort.Location = [System.Drawing.Point]::new(265, 116)
+    $script:txtVoicePort.Size = [System.Drawing.Size]::new(70, 22)
+    $panelFrp.Controls.Add($script:txtVoicePort)
+    $btnSavePorts = New-Object System.Windows.Forms.Button
+    $btnSavePorts.Text = '保存端口配置'
+    $btnSavePorts.Location = [System.Drawing.Point]::new(355, 114)
+    $btnSavePorts.Size = [System.Drawing.Size]::new(130, 26)
+    $panelFrp.Controls.Add($btnSavePorts)
+    $lblPortTip = New-Object System.Windows.Forms.Label
+    $lblPortTip.Text = '保存后需重启服务器与穿透；frp 端口需同步云服务器 frps.toml'
+    $lblPortTip.Location = [System.Drawing.Point]::new(495, 118)
+    $lblPortTip.Size = [System.Drawing.Size]::new(420, 22)
+    $lblPortTip.ForeColor = [System.Drawing.Color]::Gray
+    $panelFrp.Controls.Add($lblPortTip)
 
     # ---------- 发送脚本页 ----------
     $tabSsh = New-Object System.Windows.Forms.TabPage
@@ -3248,9 +3363,47 @@ function New-MainForm {
         }
     })
     $script:txtFrpcExe.Add_TextChanged({ $script:frpcExe = $script:txtFrpcExe.Text })
-    $script:txtFrpcCfg.Add_TextChanged({ $script:frpcCfg = $script:txtFrpcCfg.Text })
+    $script:txtFrpcCfg.Add_TextChanged({
+        $script:frpcCfg = $script:txtFrpcCfg.Text
+        if ($script:txtFrpPort) {
+            $p = Get-FrpcPorts
+            $script:txtFrpPort.Text = "$($p.FrpPort)"
+            $script:txtVoicePort.Text = "$($p.VoicePort)"
+        }
+    })
     $btnFrpStart.Add_Click({ Start-Frpc })
     $btnFrpStop.Add_Click({ Stop-Frpc })
+    $btnSavePorts.Add_Click({
+        if (-not $script:serverDir) {
+            [System.Windows.Forms.MessageBox]::Show('请先在总览页选择服务器目录。', '提示') | Out-Null
+            return
+        }
+        $frpPort = 0
+        $voicePort = 0
+        try { $frpPort = [int]$script:txtFrpPort.Text.Trim() } catch { }
+        try { $voicePort = [int]$script:txtVoicePort.Text.Trim() } catch { }
+        if ($frpPort -le 0 -or $frpPort -gt 65535 -or $voicePort -le 0 -or $voicePort -gt 65535) {
+            [System.Windows.Forms.MessageBox]::Show('端口必须是 1~65535 的数字。', '提示') | Out-Null
+            return
+        }
+        $msgs = @()
+        $oldPorts = Get-FrpcPorts
+        if ($frpPort -ne $oldPorts.FrpPort) {
+            if (Update-FrpcServerPort -Port $frpPort) {
+                $msgs += "frp 端口已改为 $frpPort（frpc.toml）"
+            } else {
+                $msgs += 'frp 端口修改失败（未找到 frpc.toml）'
+            }
+        }
+        if ($voicePort -ne $oldPorts.VoicePort) {
+            $msgs += Update-VoicePort -Port $voicePort
+        }
+        if ($msgs.Count -eq 0) { $msgs += '端口没有变化' }
+        $msgs += "注意：frp 端口需同步修改云服务器 /opt/frps/frps.toml 的 bindPort = $frpPort，并执行 systemctl restart frps，否则本地改了连不上。"
+        $msgs += '语音端口改动后需重启服务器和穿透。'
+        [System.Windows.Forms.MessageBox]::Show(($msgs -join "`r`n"), '端口配置', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        Save-Settings
+    })
 
     $btnSshScript.Add_Click({
         $dlg = New-Object System.Windows.Forms.OpenFileDialog

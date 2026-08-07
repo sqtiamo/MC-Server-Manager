@@ -32,6 +32,7 @@ $files = @(
     'README.md',
     '.gitignore',
     'upload-to-github.ps1',
+    'outputs/MCServerManager.exe',
     'outputs/mc-server-manager.ps1',
     'outputs/MCServerManagerWrapper.cs',
     'outputs/build-exe.ps1',
