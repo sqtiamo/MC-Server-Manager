@@ -1,0 +1,18 @@
+# 编译产物 / 打包结果
+*.exe
+
+# 大型或运行时生成的文件
+server-mods.zip
+*.zip
+
+# 设置与临时文件（含本机路径，不上传）
+mc-server-manager-settings.json
+*result.txt
+*.log
+
+# uitest 临时目录
+uitest/
+
+# 系统文件
+.DS_Store
+Thumbs.db
