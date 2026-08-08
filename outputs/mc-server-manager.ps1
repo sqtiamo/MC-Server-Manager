@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.81'
+$script:appVersion = 'v2.83'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -1243,6 +1243,12 @@ function Update-TunnelView {
     } else {
         $script:lblTunnelState.Text = 'frpc 未运行（启动后外地朋友可连）'
     }
+    # 内网穿透页的地址跟随当前服务器 frpc.toml（从零部署写入的云服务器IP + 游戏端口）
+    if ($script:lblFrpAddr) {
+        $addrPort = Get-ServerPort
+        if ($ip) { $script:lblFrpAddr.Text = "玩家连接地址: $ip`:$addrPort（语音端口见 frpc.toml）" }
+        else { $script:lblFrpAddr.Text = '玩家连接地址: 未配置（从零部署填云服务器IP后自动显示）' }
+    }
 }
 
 function Get-WhitelistNames {
@@ -1728,8 +1734,18 @@ function Find-FrpcExe {
         'D:\MCServer\frpc.exe',
         'D:\MC\frpc.exe'
     )
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { return $c }
+    # 现有服务器目录里的 frpc.exe（从零部署部署出的服务器，穿透路径应跟随它）
+    foreach ($d in @('D:\服务器\Spark', 'D:\服务器\wzsj', 'D:\服务器')) {
+        if (Test-Path -LiteralPath $d) {
+            $candidates += Get-ChildItem -LiteralPath $d -Recurse -Filter frpc.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+        }
+    }
+    if ($script:serverDir -and (Test-Path -LiteralPath (Join-Path $script:serverDir 'frpc.exe'))) {
+        $candidates += Join-Path $script:serverDir 'frpc.exe'
+    }
+    if ($script:frpcExe -and (Test-Path -LiteralPath $script:frpcExe)) { $candidates += $script:frpcExe }
+    foreach ($c in ($candidates | Select-Object -Unique)) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
     }
     return $null
 }
@@ -3075,7 +3091,7 @@ function New-MainForm {
 
     $panelFrp = New-Object System.Windows.Forms.Panel
     $panelFrp.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $panelFrp.Height = 110
+    $panelFrp.Height = 136
     $tabFrp.Controls.Add($panelFrp)
 
     $lblFrpcExe = New-Object System.Windows.Forms.Label
@@ -3122,6 +3138,12 @@ function New-MainForm {
     $lblFrpTip.Size = [System.Drawing.Size]::new(550, 22)
     $lblFrpTip.ForeColor = [System.Drawing.Color]::Gray
     $panelFrp.Controls.Add($lblFrpTip)
+    $script:lblFrpAddr = New-Object System.Windows.Forms.Label
+    $script:lblFrpAddr.Text = '玩家连接地址: 未配置'
+    $script:lblFrpAddr.Location = [System.Drawing.Point]::new(10, 112)
+    $script:lblFrpAddr.Size = [System.Drawing.Size]::new(600, 22)
+    $script:lblFrpAddr.ForeColor = [System.Drawing.Color]::FromArgb(0, 120, 0)
+    $panelFrp.Controls.Add($script:lblFrpAddr)
 
     # ---------- 发送脚本页 ----------
     $tabSsh = New-Object System.Windows.Forms.TabPage
