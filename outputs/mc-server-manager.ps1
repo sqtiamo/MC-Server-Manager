@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.64'
+$script:appVersion = 'v2.73'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -1540,10 +1540,11 @@ function Refresh-PlayerList {
         '未找到 whitelist.json'
     }
     if (Test-ServerRunning) {
-        $script:lblPlayersHint.Text = "服务器在线：可直接添加/移除/OP，标 [OP] 的是管理员。按住 Ctrl 可多选，多选后上方按钮对所有选中玩家批量生效。$fileInfo"
+        $script:lblPlayersHint.Text = '服务器在线：可直接添加/移除/OP，标 [OP] 是管理员；按住 Ctrl 多选后，上方按钮对所有选中玩家批量生效。'
     } else {
-        $script:lblPlayersHint.Text = "服务器离线：显示白名单文件中的玩家，标 [OP] 的是管理员。按住 Ctrl 可多选，多选后上方按钮对所有选中玩家批量生效。$fileInfo"
+        $script:lblPlayersHint.Text = '服务器离线：显示白名单文件中的玩家，标 [OP] 是管理员；按住 Ctrl 多选后，上方按钮对所有选中玩家批量生效。'
     }
+    if ($script:lblPlayersFile) { $script:lblPlayersFile.Text = $fileInfo }
 }
 
 function Refresh-ModList {
@@ -2077,8 +2078,16 @@ function Deploy-FromScratch {
     [System.Windows.Forms.MessageBox]::Show($doneMsg, '从零部署', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 
+function Get-SshOpenPortsString {
+    $ports = @()
+    if ($script:txtSshOpenGamePort -and $script:txtSshOpenGamePort.Text.Trim()) { $ports += "$($script:txtSshOpenGamePort.Text.Trim())/tcp" }
+    if ($script:txtSshOpenFrpPort -and $script:txtSshOpenFrpPort.Text.Trim()) { $ports += "$($script:txtSshOpenFrpPort.Text.Trim())/tcp" }
+    if ($script:txtSshOpenVoicePort -and $script:txtSshOpenVoicePort.Text.Trim()) { $ports += "$($script:txtSshOpenVoicePort.Text.Trim())/udp" }
+    return ($ports -join ' ')
+}
+
 function Invoke-SshAction {
-    param([bool]$Exec)
+    param([bool]$Exec, [string]$OpenPorts = '', [string]$AlsoOpenPorts = '')
     $ip = $script:txtSshIp.Text.Trim()
     $user = $script:txtSshUser.Text.Trim()
     $scriptPath = $script:txtSshScript.Text.Trim()
@@ -2088,10 +2097,6 @@ function Invoke-SshAction {
         [System.Windows.Forms.MessageBox]::Show('请填写服务器IP和用户名。', '提示') | Out-Null
         return
     }
-    if (-not $scriptPath -or -not (Test-Path -LiteralPath $scriptPath)) {
-        [System.Windows.Forms.MessageBox]::Show('请选择要上传的脚本文件。', '提示') | Out-Null
-        return
-    }
     # 直接调用已验证可用的 send-to-server.ps1（应用目录里），在新 PowerShell 窗口运行
     $appScriptsDir = if ($AppDir) { $AppDir } else { $PSScriptRoot }
     $sendScript = Join-Path $appScriptsDir 'send-to-server.ps1'
@@ -2099,12 +2104,27 @@ function Invoke-SshAction {
         [System.Windows.Forms.MessageBox]::Show('未找到 send-to-server.ps1（应用目录），请先重新同步应用。', '错误') | Out-Null
         return
     }
-    $argList = @('-ExecutionPolicy', 'Bypass', '-File', ('"' + $sendScript + '"'), '-Server', ('"' + $ip + '"'), '-User', ('"' + $user + '"'), '-Script', ('"' + $scriptPath + '"'), '-Remote', ('"' + $remote + '"'))
-    if ($script:sshToken) {
-        $argList += '-Token'
-        $argList += ('"' + $script:sshToken + '"')
+    $argList = @('-ExecutionPolicy', 'Bypass', '-File', ('"' + $sendScript + '"'), '-Server', ('"' + $ip + '"'), '-User', ('"' + $user + '"'))
+    if ($OpenPorts.Trim()) {
+        # 放行端口：走 send-to-server.ps1 的 -OpenPorts 模式
+        $argList += '-OpenPorts'
+        $argList += ('"' + $OpenPorts.Trim() + '"')
+    } else {
+        if (-not $scriptPath -or -not (Test-Path -LiteralPath $scriptPath)) {
+            [System.Windows.Forms.MessageBox]::Show('请选择要上传的脚本文件。', '提示') | Out-Null
+            return
+        }
+        $argList += '-Script', ('"' + $scriptPath + '"'), '-Remote', ('"' + $remote + '"')
+        if ($script:sshToken) {
+            $argList += '-Token'
+            $argList += ('"' + $script:sshToken + '"')
+        }
+        if ($AlsoOpenPorts.Trim()) {
+            $argList += '-AlsoOpenPorts'
+            $argList += ('"' + $AlsoOpenPorts.Trim() + '"')
+        }
+        if (-not $Exec) { $argList += '-NoExec' }
     }
-    if (-not $Exec) { $argList += '-NoExec' }
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = 'powershell.exe'
@@ -2185,7 +2205,7 @@ function New-MainForm {
     $script:lblFJavaMatch = New-Object System.Windows.Forms.Label
     $script:lblFJavaMatch.Text = '输入后自动匹配对应 Java'
     $script:lblFJavaMatch.Location = [System.Drawing.Point]::new(270, $y + 3)
-    $script:lblFJavaMatch.Size = [System.Drawing.Size]::new(420, 22)
+    $script:lblFJavaMatch.Size = [System.Drawing.Size]::new(620, 22)
     $script:lblFJavaMatch.ForeColor = [System.Drawing.Color]::Gray
     $panelFresh.Controls.Add($script:lblFJavaMatch)
     $y += 34
@@ -2198,22 +2218,22 @@ function New-MainForm {
     $script:lblFJavaStatus = New-Object System.Windows.Forms.Label
     $script:lblFJavaStatus.Text = '未检测'
     $script:lblFJavaStatus.Location = [System.Drawing.Point]::new(125, $y + 3)
-    $script:lblFJavaStatus.Size = [System.Drawing.Size]::new(300, 22)
+    $script:lblFJavaStatus.Size = [System.Drawing.Size]::new(500, 22)
     $script:lblFJavaStatus.ForeColor = [System.Drawing.Color]::Gray
     $panelFresh.Controls.Add($script:lblFJavaStatus)
     $btnFFindJava = New-Object System.Windows.Forms.Button
     $btnFFindJava.Text = '自动查找'
-    $btnFFindJava.Location = [System.Drawing.Point]::new(435, $y - 1)
+    $btnFFindJava.Location = [System.Drawing.Point]::new(640, $y - 1)
     $btnFFindJava.Size = [System.Drawing.Size]::new(90, 26)
     $panelFresh.Controls.Add($btnFFindJava)
     $script:btnFDownloadJava = New-Object System.Windows.Forms.Button
     $script:btnFDownloadJava.Text = '下载安装'
-    $script:btnFDownloadJava.Location = [System.Drawing.Point]::new(535, $y - 1)
+    $script:btnFDownloadJava.Location = [System.Drawing.Point]::new(740, $y - 1)
     $script:btnFDownloadJava.Size = [System.Drawing.Size]::new(90, 26)
     $panelFresh.Controls.Add($script:btnFDownloadJava)
     $script:btnFJavaFile = New-Object System.Windows.Forms.Button
     $script:btnFJavaFile.Text = '选择文件...'
-    $script:btnFJavaFile.Location = [System.Drawing.Point]::new(635, $y - 1)
+    $script:btnFJavaFile.Location = [System.Drawing.Point]::new(840, $y - 1)
     $script:btnFJavaFile.Size = [System.Drawing.Size]::new(100, 26)
     $panelFresh.Controls.Add($script:btnFJavaFile)
     $y += 42
@@ -2312,7 +2332,7 @@ function New-MainForm {
     $lblFreshTip = New-Object System.Windows.Forms.Label
     $lblFreshTip.Text = '流程：解压压缩包 → 同意 EULA → 生成默认配置 → 复制皮肤登录 → 生成 frpc 穿透配置。' + "`r`n" + '部署完成后请在“总览启动”页手动启动服务器和穿透。' + "`r`n" + '玩家连接地址 = 云服务器IP:游戏端口。' + "`r`n" + '⚠ 请在云服务器端放行以下端口的 TCP/UDP（ufw 和腾讯云安全组）：frp端口、游戏端口、语音端口。' + "`r`n" + '语音端口默认 24454，若改过需同步修改服务器 config\voicechat 配置。'
     $lblFreshTip.Location = [System.Drawing.Point]::new(20, $y)
-    $lblFreshTip.Size = [System.Drawing.Size]::new(840, 46)
+    $lblFreshTip.Size = [System.Drawing.Size]::new(840, 92)
     $lblFreshTip.ForeColor = [System.Drawing.Color]::Gray
     $panelFresh.Controls.Add($lblFreshTip)
     $y += 56
@@ -2486,7 +2506,7 @@ function New-MainForm {
     $btnSavePorts.Size = [System.Drawing.Size]::new(100, 26)
     $tabMain.Controls.Add($btnSavePorts)
     $lblPortsTip = New-Object System.Windows.Forms.Label
-    $lblPortsTip.Text = '保存后需重启服务器与穿透；frp 端口需同步云服务器 frps.toml'
+    $lblPortsTip.Text = '保存后需重启服务器与穿透；改端口会动外网/防火墙，谨慎修改'
     $lblPortsTip.Location = [System.Drawing.Point]::new(555, $y + 3)
     $lblPortsTip.Size = [System.Drawing.Size]::new(420, 22)
     $lblPortsTip.ForeColor = [System.Drawing.Color]::Gray
@@ -2544,7 +2564,7 @@ function New-MainForm {
     $y += 48
 
     $lblTip = New-Object System.Windows.Forms.Label
-    $lblTip.Text = '提示：选好服务器目录和 Java 后点"启动服务器"，等待控制台出现 Done (...) 即可。' + "`r`n" + '服务器和游戏可以在同一台电脑运行；玩家连接地址由内网穿透页的 frpc 决定。'
+    $lblTip.Text = '提示：选好服务器目录和 Java 后点"启动服务器"，等待控制台出现 Done (...) 即可。' + "`r`n" + '服务器和游戏可以在同一台电脑运行；点"启动穿透"后，玩家连接地址 = 上方内网穿透显示的 IP:游戏端口。'
     $lblTip.Location = [System.Drawing.Point]::new(20, $y)
     $lblTip.Size = [System.Drawing.Size]::new(820, 40)
     $lblTip.ForeColor = [System.Drawing.Color]::Gray
@@ -2692,7 +2712,7 @@ function New-MainForm {
     $lblConfigTip = New-Object System.Windows.Forms.Label
     $lblConfigTip.Text = '提示：配置保存后需要重启服务器才生效；修改"服务器端口"会自动同步 frpc.toml（需重启穿透，玩家地址变为 云服务器IP:新端口）。'
     $lblConfigTip.Location = [System.Drawing.Point]::new(20, $y)
-    $lblConfigTip.Size = [System.Drawing.Size]::new(600, 22)
+    $lblConfigTip.Size = [System.Drawing.Size]::new(940, 22)
     $lblConfigTip.ForeColor = [System.Drawing.Color]::Gray
     $panelConfig.Controls.Add($lblConfigTip)
 
@@ -2933,7 +2953,7 @@ function New-MainForm {
 
     $panelPlayers = New-Object System.Windows.Forms.Panel
     $panelPlayers.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $panelPlayers.Height = 120
+    $panelPlayers.Height = 132
     $tabPlayers.Controls.Add($panelPlayers)
 
     $lblPlayerName = New-Object System.Windows.Forms.Label
@@ -2981,10 +3001,15 @@ function New-MainForm {
     $btnEditOps.Size = [System.Drawing.Size]::new(150, 26)
     $panelPlayers.Controls.Add($btnEditOps)
     $script:lblPlayersHint = New-Object System.Windows.Forms.Label
-    $script:lblPlayersHint.Location = [System.Drawing.Point]::new(10, 84)
-    $script:lblPlayersHint.Size = [System.Drawing.Size]::new(800, 26)
+    $script:lblPlayersHint.Location = [System.Drawing.Point]::new(10, 78)
+    $script:lblPlayersHint.Size = [System.Drawing.Size]::new(800, 22)
     $script:lblPlayersHint.ForeColor = [System.Drawing.Color]::Gray
     $panelPlayers.Controls.Add($script:lblPlayersHint)
+    $script:lblPlayersFile = New-Object System.Windows.Forms.Label
+    $script:lblPlayersFile.Location = [System.Drawing.Point]::new(10, 104)
+    $script:lblPlayersFile.Size = [System.Drawing.Size]::new(800, 22)
+    $script:lblPlayersFile.ForeColor = [System.Drawing.Color]::Gray
+    $panelPlayers.Controls.Add($script:lblPlayersFile)
 
     # ---------- 模组页 ----------
     $tabMods = New-Object System.Windows.Forms.TabPage
@@ -3162,6 +3187,54 @@ function New-MainForm {
     $lblSshTokenHint.Size = [System.Drawing.Size]::new(460, 22)
     $lblSshTokenHint.ForeColor = [System.Drawing.Color]::Gray
     $tabSsh.Controls.Add($lblSshTokenHint)
+    $y += 40
+
+    $lblSshPorts = New-Object System.Windows.Forms.Label
+    $lblSshPorts.Text = '放行端口:'
+    $lblSshPorts.Location = [System.Drawing.Point]::new(20, $y + 3)
+    $lblSshPorts.Size = [System.Drawing.Size]::new(110, 22)
+    $tabSsh.Controls.Add($lblSshPorts)
+    $lblSshPortGame = New-Object System.Windows.Forms.Label
+    $lblSshPortGame.Text = '游戏'
+    $lblSshPortGame.Location = [System.Drawing.Point]::new(135, $y + 3)
+    $lblSshPortGame.Size = [System.Drawing.Size]::new(30, 22)
+    $tabSsh.Controls.Add($lblSshPortGame)
+    $script:txtSshOpenGamePort = New-Object System.Windows.Forms.TextBox
+    $script:txtSshOpenGamePort.Text = '25565'
+    $script:txtSshOpenGamePort.Location = [System.Drawing.Point]::new(165, $y)
+    $script:txtSshOpenGamePort.Size = [System.Drawing.Size]::new(70, 22)
+    $tabSsh.Controls.Add($script:txtSshOpenGamePort)
+    $lblSshPortFrp = New-Object System.Windows.Forms.Label
+    $lblSshPortFrp.Text = 'frp'
+    $lblSshPortFrp.Location = [System.Drawing.Point]::new(245, $y + 3)
+    $lblSshPortFrp.Size = [System.Drawing.Size]::new(30, 22)
+    $tabSsh.Controls.Add($lblSshPortFrp)
+    $script:txtSshOpenFrpPort = New-Object System.Windows.Forms.TextBox
+    $script:txtSshOpenFrpPort.Text = '7000'
+    $script:txtSshOpenFrpPort.Location = [System.Drawing.Point]::new(275, $y)
+    $script:txtSshOpenFrpPort.Size = [System.Drawing.Size]::new(70, 22)
+    $tabSsh.Controls.Add($script:txtSshOpenFrpPort)
+    $lblSshPortVoice = New-Object System.Windows.Forms.Label
+    $lblSshPortVoice.Text = '语音'
+    $lblSshPortVoice.Location = [System.Drawing.Point]::new(355, $y + 3)
+    $lblSshPortVoice.Size = [System.Drawing.Size]::new(30, 22)
+    $tabSsh.Controls.Add($lblSshPortVoice)
+    $script:txtSshOpenVoicePort = New-Object System.Windows.Forms.TextBox
+    $script:txtSshOpenVoicePort.Text = '24454'
+    $script:txtSshOpenVoicePort.Location = [System.Drawing.Point]::new(385, $y)
+    $script:txtSshOpenVoicePort.Size = [System.Drawing.Size]::new(70, 22)
+    $tabSsh.Controls.Add($script:txtSshOpenVoicePort)
+    $btnSshOpenPorts = New-Object System.Windows.Forms.Button
+    $btnSshOpenPorts.Text = '放行端口'
+    $btnSshOpenPorts.Location = [System.Drawing.Point]::new(470, $y - 1)
+    $btnSshOpenPorts.Size = [System.Drawing.Size]::new(100, 26)
+    $tabSsh.Controls.Add($btnSshOpenPorts)
+    $lblSshPortsHint = New-Object System.Windows.Forms.Label
+    $lblSshPortsHint.Text = '游戏TCP / frp TCP / 语音UDP；自动放行 ufw，腾讯云安全组需手动'
+    $lblSshPortsHint.Location = [System.Drawing.Point]::new(580, $y + 3)
+    $lblSshPortsHint.Size = [System.Drawing.Size]::new(390, 22)
+    $lblSshPortsHint.ForeColor = [System.Drawing.Color]::Gray
+    $tabSsh.Controls.Add($lblSshPortsHint)
     $y += 40
 
     $btnSshUpload = New-Object System.Windows.Forms.Button
@@ -3688,6 +3761,8 @@ function New-MainForm {
             [System.Windows.Forms.MessageBox]::Show('请先在总览页选择服务器目录。', '提示') | Out-Null
             return
         }
+        $warn = [System.Windows.Forms.MessageBox]::Show('⚠ 修改端口会影响玩家连接、内网穿透和云服务器防火墙（新端口需在云服务器 ufw 和腾讯云安全组放行）。' + "`r`n`r`n" + '如果你知道自己在干什么，请点"是"继续；否则请点"否"，不要修改。', '端口修改警告', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($warn -ne [System.Windows.Forms.DialogResult]::Yes) { return }
         $gamePort = 0
         $frpPort = 0
         $voicePort = 0
@@ -3757,7 +3832,15 @@ function New-MainForm {
     })
 
     $btnSshUpload.Add_Click({ Invoke-SshAction -Exec $false })
-    $btnSshExec.Add_Click({ Invoke-SshAction -Exec $true })
+    $btnSshExec.Add_Click({ Invoke-SshAction -Exec $true -AlsoOpenPorts (Get-SshOpenPortsString) })
+    $btnSshOpenPorts.Add_Click({
+        $ports = @(Get-SshOpenPortsString -split '[\s,，、;；]+' | Where-Object { $_ })
+        if ($ports.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show('请至少填一个端口（游戏 / frp / 语音）。', '提示') | Out-Null
+            return
+        }
+        Invoke-SshAction -Exec $true -OpenPorts ($ports -join ' ')
+    })
 
     # 定时器：轮询日志和状态
     $timer = New-Object System.Windows.Forms.Timer
@@ -3797,6 +3880,9 @@ if (-not $script:sshRemote) { $script:sshRemote = '~/frps-install' }
 $script:txtSshRemote.Text = $script:sshRemote
 if (-not $script:sshToken) { $script:sshToken = Get-FreshFrpToken }
 $script:txtSshToken.Text = $script:sshToken
+if ($script:gamePort) { $script:txtSshOpenGamePort.Text = "$($script:gamePort)" }
+if ($script:frpPort) { $script:txtSshOpenFrpPort.Text = "$($script:frpPort)" }
+if ($script:voicePort) { $script:txtSshOpenVoicePort.Text = "$($script:voicePort)" }
 $script:numMem.Value = [Math]::Max(1, [Math]::Min(16, $script:maxMem))
 $script:comboAuthMode.SelectedIndex = switch ($script:authMode) {
     'premium' { 0 }

@@ -8,6 +8,8 @@
 #    -Remote  远端目录（默认 ~/frps-install，自动创建）
 #    -Token   frp 认证密码（默认 trainwolf2026）
 #    -FrpVersion frp 版本号（默认 0.61.1）
+#    -OpenPorts 只放行端口，如 "25565/tcp 24454/udp"（不上传不安装）
+#    -AlsoOpenPorts 执行安装后顺便放行的端口，如 "25565/tcp 24454/udp"
 #    -NoExec  只上传不执行
 #  流程：本机先下载 frp 压缩包（已有则跳过）→ 上传脚本+压缩包 → 服务器解压安装
 #  运行后按提示输入 SSH 密码即可（scp 两次、执行 sudo 可能再一次）
@@ -19,6 +21,8 @@ param(
     [string]$Remote = '~/frps-install',
     [string]$Token = 'trainwolf2026',
     [string]$FrpVersion = '0.61.1',
+    [string]$OpenPorts = '',
+    [string]$AlsoOpenPorts = '',
     [switch]$NoExec
 )
 
@@ -33,6 +37,27 @@ if (-not $r.TcpTestSucceeded) {
     exit 1
 }
 Write-Host "[OK] SSH 端口可达" -ForegroundColor Green
+
+if ($OpenPorts.Trim()) {
+    $tokens = @($OpenPorts -split '[\s,，、;；]+' | Where-Object { $_ })
+    $bad = @($tokens | Where-Object { $_ -notmatch '^\d{1,5}(/(tcp|udp))?$' })
+    if ($bad.Count -gt 0) {
+        Write-Host "[错误] 端口格式不对: $($bad -join ', ')。示例：25565/tcp 24454/udp" -ForegroundColor Red
+        Read-Host "`n按回车退出"
+        exit 1
+    }
+    $remoteCmd = ($tokens | ForEach-Object { "sudo ufw allow $_" }) -join ' && '
+    Write-Host "==> 在服务器上放行端口: $($tokens -join ' ') ..."
+    & ssh "$User@$Server" $remoteCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[错误] 放行端口失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
+        Read-Host "`n按回车退出"
+        exit 1
+    }
+    Write-Host "[完成] 端口已在云服务器 ufw 放行；腾讯云安全组还需在控制台手动放行相同端口" -ForegroundColor Green
+    Read-Host "`n按回车退出"
+    exit 0
+}
 
 if (-not (Test-Path -LiteralPath $Script)) {
     Write-Host "[错误] 找不到脚本文件: $Script" -ForegroundColor Red
@@ -99,6 +124,10 @@ if (-not $NoExec) {
     $remoteCmd = "mkdir -p $remote && mv -f ~/$name $remote/ && mv -f ~/$zipName $remote/ && FRPS_TOKEN=$Token sudo bash $remote/$name"
 } else {
     $remoteCmd = "mkdir -p $remote && mv -f ~/$name $remote/"
+}
+if ($AlsoOpenPorts.Trim() -and -not $NoExec) {
+    $tokens = @($AlsoOpenPorts -split '[\s,，、;；]+' | Where-Object { $_ })
+    foreach ($t in $tokens) { $remoteCmd += ' && sudo ufw allow ' + $t }
 }
 
 Write-Host "==> 在服务器上执行 $name ..."
