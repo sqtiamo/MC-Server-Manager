@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.83'
+$script:appVersion = 'v2.85'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -2384,6 +2384,11 @@ function New-MainForm {
     $btnAddServer.Location = [System.Drawing.Point]::new(645, $y - 1)
     $btnAddServer.Size = [System.Drawing.Size]::new(180, 26)
     $tabMain.Controls.Add($btnAddServer)
+    $btnDeleteServer = New-Object System.Windows.Forms.Button
+    $btnDeleteServer.Text = '删除服务器'
+    $btnDeleteServer.Location = [System.Drawing.Point]::new(835, $y - 1)
+    $btnDeleteServer.Size = [System.Drawing.Size]::new(110, 26)
+    $tabMain.Controls.Add($btnDeleteServer)
     $y += 32
 
     $lblServerDir = New-Object System.Windows.Forms.Label
@@ -3520,6 +3525,44 @@ function New-MainForm {
         Refresh-ServerCombo
         Save-Settings
         [System.Windows.Forms.MessageBox]::Show('已添加: ' + $script:serverDir, '完成') | Out-Null
+    })
+    $btnDeleteServer.Add_Click({
+        $sel = [string]$script:comboServers.SelectedItem
+        if (-not $sel) {
+            [System.Windows.Forms.MessageBox]::Show('请先在列表中选择要删除的服务器。', '提示') | Out-Null
+            return
+        }
+        $dir = $sel
+        if ($sel -match '\((.+)\)\s*$') { $dir = $matches[1].Trim() }
+        if (-not $dir -or -not $script:serverProfiles.ContainsKey($dir)) {
+            [System.Windows.Forms.MessageBox]::Show('该条目不是已保存的服务器档案。', '提示') | Out-Null
+            return
+        }
+        if ($dir.TrimEnd('\').Length -le 3) {
+            [System.Windows.Forms.MessageBox]::Show('路径异常，已取消删除。', '提示') | Out-Null
+            return
+        }
+        $warn = [System.Windows.Forms.MessageBox]::Show("⚠ 删除服务器档案会同时删除该服务器的全部文件（包括存档 world、配置、模组），且不可恢复！`r`n`r`n目录: $dir`r`n`r`n确定要删除吗？", '删除服务器', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        if ($warn -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        $script:serverProfiles.Remove($dir)
+        if ($script:serverDir -eq $dir) {
+            $script:serverDir = ''
+            $script:txtServerDir.Text = ''
+        }
+        $msg = ''
+        if (Test-Path -LiteralPath $dir) {
+            try {
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+                $msg = "已删除服务器及其文件: $dir"
+            } catch {
+                $msg = "档案已删除，但服务器文件删除失败（可能被占用，请先停止服务器）: $($_.Exception.Message)"
+            }
+        } else {
+            $msg = "已删除档案: $dir（目录不存在）"
+        }
+        Refresh-ServerCombo
+        Save-Settings
+        [System.Windows.Forms.MessageBox]::Show($msg, '完成') | Out-Null
     })
     $script:txtJava.Add_TextChanged({
         $script:javaPath = $script:txtJava.Text
