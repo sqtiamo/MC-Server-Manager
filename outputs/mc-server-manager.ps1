@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.48'
+$script:appVersion = 'v2.52'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -439,8 +439,10 @@ function Match-JavaForVersion {
         $script:javaPath = $java
         $script:txtJava.Text = $java
         $script:lblFJavaMatch.Text = "已匹配 Java $major"
+        if ($script:lblFJavaStatus) { $script:lblFJavaStatus.Text = "已匹配: $java" }
     } else {
         $script:lblFJavaMatch.Text = "需要 Java $major（本机未找到，部署时会提示下载）"
+        if ($script:lblFJavaStatus) { $script:lblFJavaStatus.Text = "未找到 Java $major" }
     }
     if ($script:btnFDownloadJava) { $script:btnFDownloadJava.Text = "下载 Java $major" }
     Save-Settings
@@ -510,6 +512,12 @@ function Get-JavaDownloadUrl {
     return "https://api.adoptium.net/v3/binary/latest/$Major/ga/windows/x64/jre/hotspot/normal/eclipse"
 }
 
+function Get-JavaVersionPattern {
+    param([int]$Major)
+    if ($Major -eq 8) { return 'version "1\.8' }
+    return ('version "' + $Major)
+}
+
 function Find-JavaByMajor {
     param([int]$Major)
     $candidates = @()
@@ -524,7 +532,7 @@ function Find-JavaByMajor {
         if (-not $c) { continue }
         try {
             $v = (& $c -version 2>&1 | Out-String)
-            if ($v -match ('version "' + $Major)) { return $c }
+            if ($v -match (Get-JavaVersionPattern -Major $Major)) { return $c }
         } catch { }
     }
     return $null
@@ -564,7 +572,7 @@ function Install-ForgeServer {
     $useJava = $null
     if ($script:javaPath -and (Test-Path -LiteralPath $script:javaPath)) {
         $v = (& $script:javaPath -version 2>&1 | Out-String)
-        if ($v -match ('version "' + $major)) { $useJava = $script:javaPath }
+        if ($v -match (Get-JavaVersionPattern -Major $major)) { $useJava = $script:javaPath }
     }
     if (-not $useJava) { $useJava = Find-JavaByMajor -Major $major }
     if (-not $useJava) {
@@ -1861,6 +1869,21 @@ function Update-VoicePort {
     return ($msgs -join "`r`n")
 }
 
+function Get-FreshFrpToken {
+    # 创建服务器时自动填写的 frp 认证密码：
+    # 优先用已保存的密码，其次用 SSH 安装 frps 时用的密码，最后用 install-frps.sh 的默认值
+    if ($script:frpToken) { return $script:frpToken }
+    if ($script:sshToken) { return $script:sshToken }
+    return 'trainwolf2026'
+}
+
+function Ensure-FreshFrpTokenField {
+    if (-not $script:txtFToken) { return }
+    if ([string]::IsNullOrWhiteSpace($script:txtFToken.Text)) {
+        $script:txtFToken.Text = Get-FreshFrpToken
+    }
+}
+
 function Deploy-FromScratch {
     param([string]$ZipPath, [string]$DestDir, [bool]$UseFrp, [string]$FrpIp, [string]$FrpPort, [string]$FrpToken, [int]$GamePort, [int]$VoicePort)
 
@@ -1888,7 +1911,7 @@ function Deploy-FromScratch {
     $useJava = $null
     if ($script:javaPath -and (Test-Path -LiteralPath $script:javaPath)) {
         $v = (& $script:javaPath -version 2>&1 | Out-String)
-        if ($v -match ('version "' + $major)) { $useJava = $script:javaPath }
+        if ($v -match (Get-JavaVersionPattern -Major $major)) { $useJava = $script:javaPath }
     }
     if (-not $useJava) { $useJava = Find-JavaByMajor -Major $major }
     if (-not $useJava) {
@@ -1917,6 +1940,7 @@ function Deploy-FromScratch {
 
     # 5. 内网穿透配置
     if ($UseFrp) {
+        if (-not $FrpToken) { $FrpToken = Get-FreshFrpToken }
         if (-not $FrpIp -or -not $FrpPort) {
             [System.Windows.Forms.MessageBox]::Show('已启用穿透但没填云服务器 IP/端口，请补上。', '从零部署', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             return
@@ -1935,12 +1959,15 @@ function Deploy-FromScratch {
         Save-Settings
     }
 
-    # 6. 启动服务器
-    Start-MCServer
-    # 7. 启动穿透
-    if ($UseFrp) { Start-Frpc }
-
-    [System.Windows.Forms.MessageBox]::Show("从零部署完成！`r`n服务器目录: $DestDir`r`n玩家连接地址: $FrpIp`r`n端口: $GamePort（TCP） / $VoicePort（UDP 语音）`r`n`r`n⚠ 请确认云服务器已放行这些端口（ufw + 腾讯云安全组）：frp端口 $FrpPort、游戏端口 $GamePort、语音端口 $VoicePort。`r`n语音端口需与服务器 config\voicechat 里的配置一致（默认 24454）。", '从零部署', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $doneMsg = "从零部署完成！`r`n服务器目录: $DestDir"
+    if ($UseFrp) {
+        $doneMsg += "`r`n玩家连接地址: $FrpIp`r`n端口: $GamePort（TCP） / $VoicePort（UDP 语音）"
+    }
+    $doneMsg += "`r`n`r`n服务器和穿透未自动启动，请到[总览启动]页手动启动。"
+    if ($UseFrp) {
+        $doneMsg += "`r`n`r`n⚠ 请确认云服务器已放行这些端口（ufw + 腾讯云安全组）：frp端口 $FrpPort、游戏端口 $GamePort、语音端口 $VoicePort。`r`n语音端口需与服务器 config\voicechat 里的配置一致（默认 24454）。"
+    }
+    [System.Windows.Forms.MessageBox]::Show($doneMsg, '从零部署', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 
 # ---------------- 界面构建 ----------------
@@ -2037,6 +2064,11 @@ function New-MainForm {
     $script:btnFDownloadJava.Location = [System.Drawing.Point]::new(535, $y - 1)
     $script:btnFDownloadJava.Size = [System.Drawing.Size]::new(90, 26)
     $panelFresh.Controls.Add($script:btnFDownloadJava)
+    $script:btnFJavaFile = New-Object System.Windows.Forms.Button
+    $script:btnFJavaFile.Text = '选择文件...'
+    $script:btnFJavaFile.Location = [System.Drawing.Point]::new(635, $y - 1)
+    $script:btnFJavaFile.Size = [System.Drawing.Size]::new(100, 26)
+    $panelFresh.Controls.Add($script:btnFJavaFile)
     $y += 42
 
     $lblFJavaDir = New-Object System.Windows.Forms.Label
@@ -2122,7 +2154,7 @@ function New-MainForm {
     $y += 46
 
     $btnFullDeploy = New-Object System.Windows.Forms.Button
-    $btnFullDeploy.Text = '一键部署并启动'
+    $btnFullDeploy.Text = '一键部署'
     $btnFullDeploy.Location = [System.Drawing.Point]::new(125, $y)
     $btnFullDeploy.Size = [System.Drawing.Size]::new(200, 40)
     $btnFullDeploy.BackColor = [System.Drawing.Color]::FromArgb(220, 240, 220)
@@ -2131,7 +2163,7 @@ function New-MainForm {
     $y += 54
 
     $lblFreshTip = New-Object System.Windows.Forms.Label
-    $lblFreshTip.Text = '流程：解压压缩包 → 同意 EULA → 生成默认配置 → 复制皮肤登录 → 生成 frpc 穿透配置 → 启动服务器 → 启动穿透。' + "`r`n" + '玩家连接地址 = 云服务器IP:游戏端口。' + "`r`n" + '⚠ 请在云服务器端放行以下端口的 TCP/UDP（ufw 和腾讯云安全组）：frp端口、游戏端口、语音端口。' + "`r`n" + '语音端口默认 24454，若改过需同步修改服务器 config\voicechat 配置。'
+    $lblFreshTip.Text = '流程：解压压缩包 → 同意 EULA → 生成默认配置 → 复制皮肤登录 → 生成 frpc 穿透配置。' + "`r`n" + '部署完成后请在“总览启动”页手动启动服务器和穿透。' + "`r`n" + '玩家连接地址 = 云服务器IP:游戏端口。' + "`r`n" + '⚠ 请在云服务器端放行以下端口的 TCP/UDP（ufw 和腾讯云安全组）：frp端口、游戏端口、语音端口。' + "`r`n" + '语音端口默认 24454，若改过需同步修改服务器 config\voicechat 配置。'
     $lblFreshTip.Location = [System.Drawing.Point]::new(20, $y)
     $lblFreshTip.Size = [System.Drawing.Size]::new(840, 46)
     $lblFreshTip.ForeColor = [System.Drawing.Color]::Gray
@@ -3068,13 +3100,24 @@ function New-MainForm {
         }
     })
     $btnFindJava.Add_Click({
+        $major = $null
+        if ($script:serverDir) {
+            $mcVer = Get-McVersionFromServerDir -Dir $script:serverDir
+            if ($mcVer) { $major = Get-RequiredJavaMajor -McVersion $mcVer }
+        }
+        if (-not $major -and $script:txtFMcVersion) {
+            $mcVer = $script:txtFMcVersion.Text.Trim()
+            if ($mcVer) { $major = Get-RequiredJavaMajor -McVersion $mcVer }
+        }
         Set-UiStatus '正在查找匹配的 Java...'
-        $found = Find-Java21
+        $found = if ($major) { Find-JavaByMajor -Major $major } else { $null }
         if ($found) {
+            $script:javaPath = $found
             $script:txtJava.Text = $found
-            Set-UiStatus '已找到匹配的 Java'
+            Set-UiStatus "已找到匹配的 Java $major"
         } else {
-            [System.Windows.Forms.MessageBox]::Show('没有找到匹配的 Java，请点"自动下载安装"或手动选择。', '提示') | Out-Null
+            $msg = if ($major) { "没有找到 Java $major，请点下载安装或手动选择。" } else { '请先填写服务器目录或 Minecraft 版本。' }
+            [System.Windows.Forms.MessageBox]::Show($msg, '提示') | Out-Null
             Set-UiStatus '未找到匹配的 Java'
         }
         Save-Settings
@@ -3207,6 +3250,9 @@ function New-MainForm {
     $script:txtFIp.Add_TextChanged({ $script:frpIp = $script:txtFIp.Text; Save-Settings })
     $script:txtFFrpPort.Add_TextChanged({ $script:frpPort = $script:txtFFrpPort.Text; Save-Settings })
     $script:txtFToken.Add_TextChanged({ $script:frpToken = $script:txtFToken.Text; Save-Settings })
+    $script:chkFUseFrp.Add_CheckedChanged({
+        if ($script:chkFUseFrp.Checked) { Ensure-FreshFrpTokenField }
+    })
     $script:txtFGamePort.Add_TextChanged({ $script:gamePort = $script:txtFGamePort.Text; Save-Settings })
     $script:txtFVoicePort.Add_TextChanged({ $script:voicePort = $script:txtFVoicePort.Text; Save-Settings })
     $btnStart.Add_Click({ Start-MCServer })
@@ -3239,16 +3285,23 @@ function New-MainForm {
         }
     })
     $btnFFindJava.Add_Click({
-        Set-UiStatus '正在查找 Java 21...'
-        $found = Find-Java21
+        $mcVer = $script:txtFMcVersion.Text.Trim()
+        if (-not $mcVer) {
+            [System.Windows.Forms.MessageBox]::Show('请先填写 Minecraft 版本。', '提示') | Out-Null
+            return
+        }
+        $major = Get-RequiredJavaMajor -McVersion $mcVer
+        Set-UiStatus "正在查找 Java $major..."
+        $found = Find-JavaByMajor -Major $major
         if ($found) {
+            $script:javaPath = $found
             $script:txtJava.Text = $found
             $script:lblFJavaStatus.Text = "已找到: $found"
-            Set-UiStatus '已找到 Java 21'
+            Set-UiStatus "已找到 Java $major"
         } else {
-            $script:lblFJavaStatus.Text = '未找到'
-            [System.Windows.Forms.MessageBox]::Show('未找到 Java 21，请点"下载安装"。', '提示') | Out-Null
-            Set-UiStatus '未找到 Java 21'
+            $script:lblFJavaStatus.Text = "未找到 Java $major"
+            [System.Windows.Forms.MessageBox]::Show("未找到 Java $major，请点`"下载安装`"或手动选择 java.exe。", '提示') | Out-Null
+            Set-UiStatus "未找到 Java $major"
         }
         Save-Settings
     })
@@ -3263,6 +3316,30 @@ function New-MainForm {
             [System.Windows.Forms.MessageBox]::Show('Java 安装失败，请手动下载。', '错误') | Out-Null
         }
         Save-Settings
+    })
+    $script:btnFJavaFile.Add_Click({
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = '选择 java.exe'
+        $dlg.Filter = 'Java 可执行文件 (java.exe)|java.exe|所有文件 (*.*)|*.*'
+        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $script:javaPath = $dlg.FileName
+            $script:txtJava.Text = $dlg.FileName
+            $script:lblFJavaStatus.Text = "已选择: $($dlg.FileName)"
+            $mcVer = $script:txtFMcVersion.Text.Trim()
+            if ($mcVer) {
+                $major = Get-RequiredJavaMajor -McVersion $mcVer
+                try {
+                    $v = (& $dlg.FileName -version 2>&1 | Out-String)
+                    if ($v -match 'version "(\d+)') {
+                        $verMajor = [int]$matches[1]
+                        if ($verMajor -ne $major) {
+                            [System.Windows.Forms.MessageBox]::Show("注意：该 Java 是 $verMajor 版，当前 MC 版本需要 Java $major，可能无法启动。", '提示') | Out-Null
+                        }
+                    }
+                } catch { }
+            }
+            Save-Settings
+        }
     })
     $btnFJavaDir.Add_Click({
         $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -3560,7 +3637,13 @@ function New-MainForm {
     $script:txtSshUser.Add_TextChanged({ $script:sshUser = $script:txtSshUser.Text; Save-Settings })
     $script:txtSshScript.Add_TextChanged({ $script:sshScript = $script:txtSshScript.Text; Save-Settings })
     $script:txtSshRemote.Add_TextChanged({ $script:sshRemote = $script:txtSshRemote.Text; Save-Settings })
-    $script:txtSshToken.Add_TextChanged({ $script:sshToken = $script:txtSshToken.Text; Save-Settings })
+    $script:txtSshToken.Add_TextChanged({
+        $script:sshToken = $script:txtSshToken.Text
+        if ($script:txtFToken -and [string]::IsNullOrWhiteSpace($script:txtFToken.Text)) {
+            $script:txtFToken.Text = $script:sshToken
+        }
+        Save-Settings
+    })
 
     function Invoke-SshAction {
         param([bool]$Exec)
@@ -3654,6 +3737,7 @@ $script:txtFDir.Text = $script:freshDir
 $script:txtFIp.Text = $script:frpIp
 if ($script:frpPort) { $script:txtFFrpPort.Text = $script:frpPort }
 $script:txtFToken.Text = $script:frpToken
+Ensure-FreshFrpTokenField
 if ($script:gamePort) { $script:txtFGamePort.Text = $script:gamePort }
 if ($script:voicePort) { $script:txtFVoicePort.Text = $script:voicePort }
 $script:txtFMcVersion.Text = $script:freshMcVersion
