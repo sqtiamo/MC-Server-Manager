@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.80'
+$script:appVersion = 'v2.81'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -91,8 +91,6 @@ function Save-Settings {
         skinStation = $script:skinStation
         maxMem    = $script:maxMem
         maxPlayers = $script:maxPlayers
-        freshZip  = $script:freshZip
-        freshDir  = $script:freshDir
         frpIp     = $script:frpIp
         frpPort   = $script:frpPort
         frpToken  = $script:frpToken
@@ -100,7 +98,6 @@ function Save-Settings {
         voicePort = $script:voicePort
         deployZip = $script:deployZip
         deployDir = $script:deployDir
-        freshMcVersion = $script:freshMcVersion
         sshIp     = $script:sshIp
         sshUser   = $script:sshUser
         sshScript = $script:sshScript
@@ -137,8 +134,6 @@ function Load-Settings {
         }
         if ($s.maxMem) { $script:maxMem = [int]$s.maxMem }
         if ($s.maxPlayers) { $script:maxPlayers = [int]$s.maxPlayers }
-        if ($s.freshZip) { $script:freshZip = $s.freshZip }
-        if ($s.freshDir) { $script:freshDir = $s.freshDir }
         if ($s.frpIp) { $script:frpIp = $s.frpIp }
         if ($s.frpPort) { $script:frpPort = $s.frpPort }
         if ($s.frpToken) { $script:frpToken = $s.frpToken }
@@ -146,7 +141,6 @@ function Load-Settings {
         if ($s.voicePort) { $script:voicePort = $s.voicePort }
         if ($s.deployZip) { $script:deployZip = $s.deployZip }
         if ($s.deployDir) { $script:deployDir = $s.deployDir }
-        if ($s.freshMcVersion) { $script:freshMcVersion = $s.freshMcVersion }
         if ($s.sshIp) { $script:sshIp = $s.sshIp }
         if ($s.sshUser) { $script:sshUser = $s.sshUser }
         if ($s.sshScript) { $script:sshScript = $s.sshScript }
@@ -4010,15 +4004,12 @@ if ($script:comboSkin) { $script:comboSkin.Enabled = ($script:authMode -eq 'thir
 if ($script:txtAuthUrl) { $script:txtAuthUrl.Enabled = ($script:authMode -eq 'thirdparty' -and $script:skinStation -eq '自定义') }
 $script:txtFrpcExe.Text = $script:frpcExe
 $script:txtFrpcCfg.Text = $script:frpcCfg
-$script:txtFZip.Text = $script:freshZip
-$script:txtFDir.Text = $script:freshDir
 $script:txtFIp.Text = $script:frpIp
 if ($script:frpPort) { $script:txtFFrpPort.Text = $script:frpPort }
 $script:txtFToken.Text = $script:frpToken
 Ensure-FreshFrpTokenField
 if ($script:gamePort) { $script:txtFGamePort.Text = $script:gamePort }
 if ($script:voicePort) { $script:txtFVoicePort.Text = $script:voicePort }
-$script:txtFMcVersion.Text = $script:freshMcVersion
 Match-JavaForVersion
 Match-JavaForServerDir
 Auto-MatchFrpForServerDir
