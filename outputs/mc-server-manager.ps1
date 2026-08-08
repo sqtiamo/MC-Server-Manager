@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.76'
+$script:appVersion = 'v2.80'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -2137,9 +2137,25 @@ function Invoke-SshAction {
     }
 }
 
+function Set-WhiteUiBackground {
+    # 把默认灰色背景的界面元素调成白色（保留自定义颜色，如按钮的绿色）
+    param([System.Windows.Forms.Control]$Root)
+    if ($Root -is [System.Windows.Forms.Form] -or $Root -is [System.Windows.Forms.TabControl] -or $Root -is [System.Windows.Forms.TabPage] -or $Root -is [System.Windows.Forms.Panel] -or $Root -is [System.Windows.Forms.GroupBox] -or $Root -is [System.Windows.Forms.Label]) {
+        if ($Root.BackColor -eq [System.Drawing.SystemColors]::Control) {
+            $Root.BackColor = [System.Drawing.Color]::White
+        }
+    }
+    foreach ($child in $Root.Controls) { Set-WhiteUiBackground -Root $child }
+}
+
 # ---------------- 界面构建 ----------------
 function New-MainForm {
     $form = New-Object System.Windows.Forms.Form
+    try {
+        # 强制使用 exe 自带的图标（避免窗口仍显示旧默认图标）
+        $ic = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+        if ($ic) { $form.Icon = $ic }
+    } catch { }
     $form.Text = 'MC 服务器管理器 ' + $script:appVersion
     $form.Size = [System.Drawing.Size]::new(1000, 700)
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -3947,6 +3963,7 @@ function New-MainForm {
     })
     $timer.Start()
 
+    Set-WhiteUiBackground -Root $form
     return $form
 }
 

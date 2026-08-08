@@ -136,6 +136,8 @@ $refs = @(
 )
 $argList = @('/nologo', '/optimize+', '/target:winexe', "/out:$out")
 foreach ($r in $refs) { $argList += "/r:$r" }
+$icon = Join-Path $dir 'icon.ico'
+if (Test-Path -LiteralPath $icon) { $argList += "/win32icon:$icon" }
 $argList += $cs
 & $csc.FullName @argList
 
