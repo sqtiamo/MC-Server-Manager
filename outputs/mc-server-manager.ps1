@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.52'
+$script:appVersion = 'v2.55'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -2992,7 +2992,7 @@ function New-MainForm {
     $script:txtSshRemote.Size = [System.Drawing.Size]::new(200, 22)
     $tabSsh.Controls.Add($script:txtSshRemote)
     $lblSshRemoteHint = New-Object System.Windows.Forms.Label
-    $lblSshRemoteHint.Text = '留空则上传到主目录 ~/'
+    $lblSshRemoteHint.Text = '默认 ~/frps-install（专用目录，不影响其他项目）'
     $lblSshRemoteHint.Location = [System.Drawing.Point]::new(345, $y + 3)
     $lblSshRemoteHint.Size = [System.Drawing.Size]::new(300, 22)
     $lblSshRemoteHint.ForeColor = [System.Drawing.Color]::Gray
@@ -3029,7 +3029,7 @@ function New-MainForm {
     $y += 48
 
     $lblSshTip = New-Object System.Windows.Forms.Label
-    $lblSshTip.Text = '提示：点击后会弹出黑色窗口，在窗口里输入服务器 SSH 密码即可完成传输（执行 sudo 命令时再输一次密码）。' + "`r`n" + '传输的是 scp（OpenSSH 自带）。上方"frp 认证密码"仅在"上传并执行 install-frps.sh"时自动传给脚本作为 frps 的认证 token。'
+    $lblSshTip.Text = '提示：点击后会弹出黑色窗口，在窗口里输入服务器 SSH 密码即可完成传输（执行 sudo 命令时再输一次密码）。' + "`r`n" + '传输的是 scp（OpenSSH 自带），会自动创建远端专用目录并把脚本移进去。上方"frp 认证密码"仅在"上传并执行 install-frps.sh"时自动传给脚本作为 frps 的认证 token。'
     $lblSshTip.Location = [System.Drawing.Point]::new(20, $y)
     $lblSshTip.Size = [System.Drawing.Size]::new(800, 46)
     $lblSshTip.ForeColor = [System.Drawing.Color]::Gray
@@ -3652,8 +3652,8 @@ function New-MainForm {
         $ip = $script:txtSshIp.Text.Trim()
         $user = $script:txtSshUser.Text.Trim()
         $scriptPath = $script:txtSshScript.Text.Trim()
-        $remote = $script:txtSshRemote.Text.Trim()
-        if (-not $remote) { $remote = '~/' }
+        $remote = $script:txtSshRemote.Text.Trim().TrimEnd('/')
+        if (-not $remote) { $remote = '~/frps-install' }
         if (-not $scp) {
             [System.Windows.Forms.MessageBox]::Show('未找到 scp.exe（Windows OpenSSH），无法上传。', '错误') | Out-Null
             return
@@ -3666,20 +3666,27 @@ function New-MainForm {
             [System.Windows.Forms.MessageBox]::Show('请选择要上传的脚本文件。', '提示') | Out-Null
             return
         }
-        if ($remote -notmatch '/$') { $remote += '/' }
-        $target = "$user@$ip`:$remote"
-        $cmdLine = '"' + $scp + '" "' + $scriptPath + '" "' + $target + '"'
+        $name = Split-Path -Leaf $scriptPath
+        # 先传到主目录（必然存在），再用 ssh 创建专用目录并移过去，避免污染主目录/其他项目
+        $cmdLine = '"' + $scp + '" "' + $scriptPath + '" "' + $user + '@' + $ip + ':~/"' 
+        $remoteCmd = 'mkdir -p ' + $remote + ' && mv -f ~/' + $name + ' ' + $remote + '/'
         if ($Exec) {
-            $name = Split-Path -Leaf $scriptPath
-            $remotePath = $remote + $name
             $envPrefix = ''
             if ($script:sshToken) {
                 $envPrefix = 'FRPS_TOKEN=' + $script:sshToken + ' '
             }
-            $cmdLine += ' && "' + $ssh + '" "' + "$user@$ip" + '" "' + $envPrefix + 'sudo bash ' + $remotePath + '"'
+            $remoteCmd += ' && ' + $envPrefix + 'sudo bash ' + $remote + '/' + $name
         }
-        $cmdLine += ' & pause'
-        Start-Process cmd.exe -ArgumentList @('/c', $cmdLine)
+        $cmdLine += ' && "' + $ssh + '" "' + "$user@$ip" + '" "' + $remoteCmd + '"'
+        try {
+            # 用临时 .bat 启动，避免 Start-Process 对带引号长命令的转义问题（否则窗口会闪退/无窗口）
+            $tmpBat = Join-Path $env:TEMP ('frp-upload-' + [guid]::NewGuid().ToString('N') + '.bat')
+            $batContent = '@echo off' + "`r`n" + 'chcp 65001 >nul' + "`r`n" + $cmdLine + "`r`n" + 'pause' + "`r`n"
+            [System.IO.File]::WriteAllText($tmpBat, $batContent, (New-Object System.Text.UTF8Encoding($false)))
+            Start-Process cmd.exe -ArgumentList @('/c', "`"$tmpBat`"")
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show('启动上传窗口失败: ' + $_.Exception.Message, '错误') | Out-Null
+        }
     }
     $btnSshUpload.Add_Click({ Invoke-SshAction -Exec $false })
     $btnSshExec.Add_Click({ Invoke-SshAction -Exec $true })
@@ -3713,8 +3720,14 @@ if (-not $script:javaInstallDir) { $script:javaInstallDir = Get-DefaultJavaInsta
 $script:txtFJavaInstallDir.Text = $script:javaInstallDir
 $script:txtSshIp.Text = $script:sshIp
 $script:txtSshUser.Text = $script:sshUser
+if (-not $script:sshScript) {
+    $defaultSshScript = Join-Path $(if ($AppDir) { $AppDir } else { $PSScriptRoot }) 'install-frps.sh'
+    if (Test-Path -LiteralPath $defaultSshScript) { $script:sshScript = $defaultSshScript }
+}
 $script:txtSshScript.Text = $script:sshScript
+if (-not $script:sshRemote) { $script:sshRemote = '~/frps-install' }
 $script:txtSshRemote.Text = $script:sshRemote
+if (-not $script:sshToken) { $script:sshToken = Get-FreshFrpToken }
 $script:txtSshToken.Text = $script:sshToken
 $script:numMem.Value = [Math]::Max(1, [Math]::Min(16, $script:maxMem))
 $script:comboAuthMode.SelectedIndex = switch ($script:authMode) {
