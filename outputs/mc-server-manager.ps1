@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.47'
+$script:appVersion = 'v2.48'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -299,7 +299,12 @@ function Sync-AuthToServerProps {
     if (-not $script:serverDir) { return }
     $spFile = Join-Path $script:serverDir 'server.properties'
     if (-not (Test-Path -LiteralPath $spFile)) { return }
-    $expectedOnline = if ($script:authMode -eq 'premium') { 'true' } else { 'false' }
+    # 官方与第三方皮肤站(带 authlib-injector)都应保持 online-mode=true，
+    # 由服务器在线验证并把皮肤分发给所有客户端；仅“离线模式”才用 false。
+    $expectedOnline = 'false'
+    if ($script:authMode -eq 'premium' -or ($script:authMode -eq 'thirdparty' -and $script:skinStation -ne '离线模式')) {
+        $expectedOnline = 'true'
+    }
     Update-PropertyFile -FilePath $spFile -Changes @{ 'online-mode' = $expectedOnline }
 }
 
@@ -910,13 +915,22 @@ function Start-MCServer {
     Ensure-Rcon
 
     $args = @()
+    $agentArg = ''
     if ($script:authMode -eq 'thirdparty' -and $script:skinStation -ne '离线模式') {
         $agentArg = Get-AuthJavaAgentArg -ServerDir $script:serverDir
         if ($agentArg) { $args += $agentArg }
     }
+    $agentMissing = $false
     $spFile = Join-Path $script:serverDir 'server.properties'
     if (Test-Path -LiteralPath $spFile) {
-        $expectedOnline = if ($script:authMode -eq 'premium') { 'true' } else { 'false' }
+        # 第三方皮肤站必须 online-mode=true，服务器才能把皮肤分发给所有客户端；
+        # 若缺少 authlib-injector 则退回离线模式并提示，避免所有玩家无法进服。
+        $expectedOnline = 'false'
+        if ($script:authMode -eq 'premium') {
+            $expectedOnline = 'true'
+        } elseif ($script:authMode -eq 'thirdparty' -and $script:skinStation -ne '离线模式') {
+            if ($agentArg) { $expectedOnline = 'true' } else { $agentMissing = $true }
+        }
         Update-PropertyFile -FilePath $spFile -Changes @{ 'online-mode' = $expectedOnline }
     }
     $args += '-Xmx' + $script:maxMem + 'G'
@@ -931,6 +945,9 @@ function Start-MCServer {
         Save-Settings
         $script:txtConsole.AppendText("`r`n[系统] 服务器已启动 (PID $($proc.Id))，等待 Done...`r`n")
         Set-UiStatus "服务器启动中 (PID $($proc.Id))"
+        if ($agentMissing) {
+            [System.Windows.Forms.MessageBox]::Show('未找到 authlib-injector.jar，服务器已退回离线模式(online-mode=false)，皮肤需要客户端解析。请确认服务器目录里有 authlib-injector.jar。', '提示') | Out-Null
+        }
     } catch {
         [System.Windows.Forms.MessageBox]::Show('启动失败: ' + $_.Exception.Message, '错误') | Out-Null
     }
@@ -3132,6 +3149,9 @@ function New-MainForm {
         if ($script:comboSkin) { $script:comboSkin.Enabled = ($script:authMode -eq 'thirdparty') }
         if ($script:txtAuthUrl) { $script:txtAuthUrl.Enabled = ($script:authMode -eq 'thirdparty') }
         if ($script:btnGenBat) { $script:btnGenBat.Enabled = $true }
+        if ($script:chkOnline) {
+            $script:chkOnline.Checked = ($script:authMode -eq 'premium' -or ($script:authMode -eq 'thirdparty' -and $script:skinStation -ne '离线模式'))
+        }
         Sync-AuthToServerProps
         Save-Settings
     })
@@ -3145,6 +3165,10 @@ function New-MainForm {
             $script:txtAuthUrl.Text = ''
         }
         if ($script:txtAuthUrl) { $script:txtAuthUrl.Enabled = ($script:skinStation -eq '自定义') }
+        if ($script:chkOnline) {
+            $script:chkOnline.Checked = ($script:authMode -eq 'premium' -or ($script:authMode -eq 'thirdparty' -and $script:skinStation -ne '离线模式'))
+        }
+        Sync-AuthToServerProps
         Save-Settings
     })
     $script:txtAuthUrl.Add_TextChanged({
