@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.73'
+$script:appVersion = 'v2.76'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -3255,6 +3255,100 @@ function New-MainForm {
     $lblSshTip.Size = [System.Drawing.Size]::new(800, 46)
     $lblSshTip.ForeColor = [System.Drawing.Color]::Gray
     $tabSsh.Controls.Add($lblSshTip)
+
+    # ---------- 关于页 ----------
+    $tabAbout = New-Object System.Windows.Forms.TabPage
+    $tabAbout.Text = '关于'
+    $tabs.TabPages.Add($tabAbout)
+
+    $lblAboutTitle = New-Object System.Windows.Forms.Label
+    $lblAboutTitle.Text = 'MC 服务器管理器 ' + $script:appVersion
+    $lblAboutTitle.Location = [System.Drawing.Point]::new(30, 30)
+    $lblAboutTitle.Size = [System.Drawing.Size]::new(500, 28)
+    $lblAboutTitle.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 12, [System.Drawing.FontStyle]::Bold)
+    $tabAbout.Controls.Add($lblAboutTitle)
+
+    $lblAboutDesc = New-Object System.Windows.Forms.Label
+    $lblAboutDesc.Text = '一键部署 / 启动 / 管理 Minecraft 服务器（多服务器档案、官方/第三方登录、frp 穿透）。'
+    $lblAboutDesc.Location = [System.Drawing.Point]::new(30, 72)
+    $lblAboutDesc.Size = [System.Drawing.Size]::new(700, 24)
+    $tabAbout.Controls.Add($lblAboutDesc)
+
+    $linkAbout = New-Object System.Windows.Forms.LinkLabel
+    $linkAbout.Text = 'GitHub'
+    $linkAbout.Location = [System.Drawing.Point]::new(30, 112)
+    $linkAbout.Size = [System.Drawing.Size]::new(600, 24)
+    $linkAbout.LinkArea = New-Object System.Windows.Forms.LinkArea(0, $linkAbout.Text.Length)
+    $linkAbout.Add_LinkClicked({
+        try { [System.Diagnostics.Process]::Start('https://github.com/sqtiamo/MC-Server-Manager') } catch { }
+    })
+    $tabAbout.Controls.Add($linkAbout)
+
+    $lblAboutFeedback = New-Object System.Windows.Forms.Label
+    $lblAboutFeedback.Text = '问题反馈:'
+    $lblAboutFeedback.Location = [System.Drawing.Point]::new(30, 160)
+    $lblAboutFeedback.Size = [System.Drawing.Size]::new(200, 22)
+    $tabAbout.Controls.Add($lblAboutFeedback)
+
+    $btnLogZip = New-Object System.Windows.Forms.Button
+    $btnLogZip.Text = '生成日志压缩包'
+    $btnLogZip.Location = [System.Drawing.Point]::new(30, 190)
+    $btnLogZip.Size = [System.Drawing.Size]::new(140, 30)
+    $btnLogZip.Add_Click({
+        if (-not $script:serverDir -or -not (Test-Path -LiteralPath $script:serverDir)) {
+            [System.Windows.Forms.MessageBox]::Show('请先在总览页选择服务器目录。', '提示') | Out-Null
+            return
+        }
+        $logs = Join-Path $script:serverDir 'logs'
+        $crashes = Join-Path $script:serverDir 'crash-reports'
+        if (-not (Test-Path -LiteralPath $logs) -and -not (Test-Path -LiteralPath $crashes)) {
+            [System.Windows.Forms.MessageBox]::Show('服务器目录里没有 logs 或 crash-reports 文件夹。', '提示') | Out-Null
+            return
+        }
+        $tempRoot = Join-Path $env:TEMP ('mc-logs-' + [guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+            if (Test-Path -LiteralPath $logs) { Copy-Item -LiteralPath $logs -Destination (Join-Path $tempRoot 'logs') -Recurse -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $crashes) { Copy-Item -LiteralPath $crashes -Destination (Join-Path $tempRoot 'crash-reports') -Recurse -Force -ErrorAction SilentlyContinue }
+            $appErr = Join-Path $(if ($AppDir) { $AppDir } else { $PSScriptRoot }) 'error.txt'
+            if (Test-Path -LiteralPath $appErr) { Copy-Item -LiteralPath $appErr -Destination (Join-Path $tempRoot 'app-error.txt') -Force -ErrorAction SilentlyContinue }
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $zipPath = Join-Path ([Environment]::GetFolderPath('Desktop')) ("MC服务器日志-$stamp.zip")
+            Compress-Archive -Path (Join-Path $tempRoot '*') -DestinationPath $zipPath -Force
+            [System.Windows.Forms.MessageBox]::Show("日志压缩包已生成:`r`n$zipPath`r`n可连同问题描述一起发到 GitHub Issues。", '完成') | Out-Null
+            Start-Process explorer.exe -ArgumentList ('/select,"' + $zipPath + '"') -ErrorAction SilentlyContinue
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show('生成失败: ' + $_.Exception.Message + "`r`n（若服务器正在运行，部分日志可能被占用；可先停止服务器再试。）", '错误') | Out-Null
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    })
+    $tabAbout.Controls.Add($btnLogZip)
+
+    $btnLogOpen = New-Object System.Windows.Forms.Button
+    $btnLogOpen.Text = '打开日志文件夹'
+    $btnLogOpen.Location = [System.Drawing.Point]::new(180, 190)
+    $btnLogOpen.Size = [System.Drawing.Size]::new(140, 30)
+    $btnLogOpen.Add_Click({
+        if (-not $script:serverDir) {
+            [System.Windows.Forms.MessageBox]::Show('请先在总览页选择服务器目录。', '提示') | Out-Null
+            return
+        }
+        $logs = Join-Path $script:serverDir 'logs'
+        if (-not (Test-Path -LiteralPath $logs)) { $logs = $script:serverDir }
+        Start-Process explorer.exe -ArgumentList $logs
+    })
+    $tabAbout.Controls.Add($btnLogOpen)
+
+    $linkIssues = New-Object System.Windows.Forms.LinkLabel
+    $linkIssues.Text = 'GitHub Issues（提交问题反馈）'
+    $linkIssues.Location = [System.Drawing.Point]::new(30, 240)
+    $linkIssues.Size = [System.Drawing.Size]::new(400, 24)
+    $linkIssues.LinkArea = New-Object System.Windows.Forms.LinkArea(0, $linkIssues.Text.Length)
+    $linkIssues.Add_LinkClicked({
+        try { [System.Diagnostics.Process]::Start('https://github.com/sqtiamo/MC-Server-Manager/issues') } catch { }
+    })
+    $tabAbout.Controls.Add($linkIssues)
 
     # ---------- 底部状态栏 ----------
     $panelStatus = New-Object System.Windows.Forms.FlowLayoutPanel
