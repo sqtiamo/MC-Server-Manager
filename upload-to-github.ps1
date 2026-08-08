@@ -4,11 +4,13 @@
 #  可选参数:
 #    -RepoName  仓库名（默认 MC-Server-Manager）
 #    -GitHubUser GitHub 用户名（默认 sqtiamo）
+#    -Message   自定义提交信息（不填则自动生成，控制台运行时可手动输入覆盖）
 #  首次执行会弹出 GitHub 登录窗口（Windows 凭据管理器），登录一次即可。
 # ============================================================
 param(
     [string]$RepoName = 'MC-Server-Manager',
-    [string]$GitHubUser = 'sqtiamo'
+    [string]$GitHubUser = 'sqtiamo',
+    [string]$Message = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -49,10 +51,28 @@ git add @($files) 2>$null
 Write-Host '  已添加项目文件（服务器压缩包、exe、设置文件等已被排除）'
 
 Write-Host '========== 3/5 提交 =========='
-$staged = git diff --cached --name-only
-if ($staged) {
-    git commit -m "MC Server Manager: 一键部署/启动/管理 Minecraft 服务器（多服务器档案、官方/第三方登录、frp 穿透）" 2>$null
-    Write-Host '  已提交'
+$staged = @(git diff --cached --name-only)
+if ($staged.Count -gt 0) {
+    if (-not $Message) {
+        $ver = ''
+        $ps1Path = Join-Path $repoRoot 'outputs\mc-server-manager.ps1'
+        if (Test-Path -LiteralPath $ps1Path) {
+            $vm = Select-String -LiteralPath $ps1Path -Pattern "\`$script:appVersion = '([^']+)'" | Select-Object -First 1
+            if ($vm) { $ver = $vm.Matches[0].Groups[1].Value }
+        }
+        $fileList = ($staged | Select-Object -First 4) -join ', '
+        if ($staged.Count -gt 4) { $fileList += ' 等' }
+        $defaultMsg = 'MC Server Manager: 一键部署/启动/管理 Minecraft 服务器（多服务器档案、官方/第三方登录、frp 穿透）'
+        if ($ver) { $defaultMsg += " $ver" }
+        $defaultMsg += ": 更新 $($staged.Count) 个文件（$fileList）"
+        if (-not [Console]::IsInputRedirected) {
+            $custom = Read-Host "提交信息（直接回车用默认）: "
+            if ($custom -and $custom.Trim()) { $Message = $custom.Trim() }
+        }
+        if (-not $Message) { $Message = $defaultMsg }
+    }
+    git commit -m $Message 2>$null
+    Write-Host "  已提交: $Message"
 } else {
     Write-Host '  没有新改动，跳过提交'
 }
