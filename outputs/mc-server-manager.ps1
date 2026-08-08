@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.61'
+$script:appVersion = 'v2.64'
 $script:lastPortCheck = 0
 $script:lastRunningScan = 0
 $script:cachedRunningServer = $null
@@ -119,6 +119,7 @@ function Load-Settings {
     if (-not (Test-Path -LiteralPath $script:settingsPath)) { return }
     try {
         $s = Get-Content -LiteralPath $script:settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($s.serverDir) { $script:serverDir = [string]$s.serverDir }
         if ($s.javaPath) { $script:javaPath = $s.javaPath }
         if ($s.javaMap) {
             foreach ($p in $s.javaMap.PSObject.Properties) { $script:javaMap[$p.Name] = [string]$p.Value }
@@ -1472,6 +1473,52 @@ function Invoke-WhitelistAdd {
     return "服务器未运行，已通过皮肤站解析 UUID 直接写入白名单：$msg"
 }
 
+function Get-ActionPlayerNames {
+    # 输入框有名字则用输入框（单个玩家）；否则用列表多选（Ctrl 多选 → 批量）
+    $names = New-Object System.Collections.Generic.List[string]
+    $typed = $script:txtPlayer.Text.Trim()
+    if ($typed) {
+        $names.Add($typed)
+        return $names
+    }
+    if ($script:lstPlayers) {
+        foreach ($item in @($script:lstPlayers.SelectedItems)) {
+            $n = ([string]$item -replace ' \[OP\]\s*$', '').Trim()
+            if ($n) { $names.Add($n) }
+        }
+    }
+    return $names
+}
+
+function Invoke-PlayerAction {
+    param([string]$Action)
+    if (-not $script:serverDir) {
+        [System.Windows.Forms.MessageBox]::Show('请先选择服务器目录。', '玩家操作') | Out-Null
+        return
+    }
+    $names = Get-ActionPlayerNames
+    if ($names.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show('请先输入玩家ID，或按住 Ctrl 在列表中多选玩家。', '玩家操作') | Out-Null
+        return
+    }
+    $ok = 0
+    $fail = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $names) {
+        $result = switch ($Action) {
+            'addwl'    { Invoke-WhitelistAdd -Name $name -TimeoutSeconds 4 }
+            'removewl' { Invoke-WhitelistRemove -Name $name }
+            'op'       { Invoke-OpChange -Name $name -MakeOp $true }
+            'deop'     { Invoke-OpChange -Name $name -MakeOp $false }
+        }
+        if ($result) { $fail.Add("$name : $result") } else { $ok++ }
+    }
+    $msg = if ($names.Count -eq 1) { "操作完成：$($names[0]) 已处理（成功）" } else { "批量完成：成功 $ok 个" }
+    if ($fail.Count -gt 0) {
+        $msg += "`r`n`r`n提示/失败 $($fail.Count) 个：`r`n" + ($fail -join "`r`n")
+    }
+    [System.Windows.Forms.MessageBox]::Show($msg, '玩家操作') | Out-Null
+}
+
 function Refresh-PlayerList {
     $script:lstPlayers.Items.Clear()
     $names = Get-WhitelistNames
@@ -1493,9 +1540,9 @@ function Refresh-PlayerList {
         '未找到 whitelist.json'
     }
     if (Test-ServerRunning) {
-        $script:lblPlayersHint.Text = "服务器在线：可直接添加/移除/OP，标 [OP] 的是管理员。$fileInfo"
+        $script:lblPlayersHint.Text = "服务器在线：可直接添加/移除/OP，标 [OP] 的是管理员。按住 Ctrl 可多选，多选后上方按钮对所有选中玩家批量生效。$fileInfo"
     } else {
-        $script:lblPlayersHint.Text = "服务器离线：显示白名单文件中的玩家，标 [OP] 的是管理员。$fileInfo"
+        $script:lblPlayersHint.Text = "服务器离线：显示白名单文件中的玩家，标 [OP] 的是管理员。按住 Ctrl 可多选，多选后上方按钮对所有选中玩家批量生效。$fileInfo"
     }
 }
 
@@ -2881,6 +2928,7 @@ function New-MainForm {
 
     $script:lstPlayers = New-Object System.Windows.Forms.ListBox
     $script:lstPlayers.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $script:lstPlayers.SelectionMode = [System.Windows.Forms.SelectionMode]::MultiExtended
     $tabPlayers.Controls.Add($script:lstPlayers)
 
     $panelPlayers = New-Object System.Windows.Forms.Panel
@@ -3540,70 +3588,33 @@ function New-MainForm {
     })
 
     $btnAddPlayer.Add_Click({
-        $name = $script:txtPlayer.Text.Trim()
-        if (-not $name) {
-            [System.Windows.Forms.MessageBox]::Show('请先输入玩家ID。', '加白名单', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            return
-        }
-        $result = Invoke-WhitelistAdd -Name $name
+        Invoke-PlayerAction -Action 'addwl'
         $script:txtPlayer.Clear()
         Refresh-PlayerList
-        if ($result) {
-            [System.Windows.Forms.MessageBox]::Show($result, '加白名单', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-        } else {
-            [System.Windows.Forms.MessageBox]::Show("已把 $name 加入白名单（服务器已确认）。", '加白名单') | Out-Null
-        }
     })
     $btnRemovePlayer.Add_Click({
-        $name = $script:txtPlayer.Text.Trim()
-        if (-not $name) { $sel = $script:lstPlayers.SelectedItem; if ($sel) { $name = ($sel -replace ' \[OP\]\s*$', '') } }
-        if (-not $name) {
-            [System.Windows.Forms.MessageBox]::Show('请先选择或输入玩家ID。', '移除白名单', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            return
-        }
-        $result = Invoke-WhitelistRemove -Name $name
+        Invoke-PlayerAction -Action 'removewl'
         $script:txtPlayer.Clear()
         Refresh-PlayerList
-        if ($result) {
-            [System.Windows.Forms.MessageBox]::Show($result, '移除白名单', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-        } else {
-            [System.Windows.Forms.MessageBox]::Show("已完成：$name 已移出白名单（文件已改，指令已发，服务器处理中）。", '移除白名单') | Out-Null
-        }
     })
     $btnOp.Add_Click({
-        $name = $script:txtPlayer.Text.Trim()
-        if (-not $name) { $sel = $script:lstPlayers.SelectedItem; if ($sel) { $name = ($sel -replace ' \[OP\]\s*$', '') } }
-        if (-not $name) {
-            [System.Windows.Forms.MessageBox]::Show('请先选择或输入玩家ID。', '设为 OP', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            return
-        }
-        $result = Invoke-OpChange -Name $name -MakeOp $true
+        Invoke-PlayerAction -Action 'op'
+        $script:txtPlayer.Clear()
         Refresh-PlayerList
-        if ($result) {
-            [System.Windows.Forms.MessageBox]::Show($result, '设为 OP', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-        } else {
-            [System.Windows.Forms.MessageBox]::Show("已完成：$name 的 OP 已更新（文件已改，指令已发，服务器处理中）。", '设为 OP') | Out-Null
-        }
     })
     $btnDeop.Add_Click({
-        $name = $script:txtPlayer.Text.Trim()
-        if (-not $name) { $sel = $script:lstPlayers.SelectedItem; if ($sel) { $name = ($sel -replace ' \[OP\]\s*$', '') } }
-        if (-not $name) {
-            [System.Windows.Forms.MessageBox]::Show('请先选择或输入玩家ID。', '取消 OP', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            return
-        }
-        $result = Invoke-OpChange -Name $name -MakeOp $false
+        Invoke-PlayerAction -Action 'deop'
+        $script:txtPlayer.Clear()
         Refresh-PlayerList
-        if ($result) {
-            [System.Windows.Forms.MessageBox]::Show($result, '取消 OP', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-        } else {
-            [System.Windows.Forms.MessageBox]::Show("已完成：$name 的管理员已取消（文件已改，指令已发，服务器处理中）。", '取消 OP') | Out-Null
-        }
     })
     $btnRefreshPlayers.Add_Click({ Refresh-PlayerList })
     $script:lstPlayers.Add_SelectedIndexChanged({
-        $sel = $script:lstPlayers.SelectedItem
-        if ($sel) { $script:txtPlayer.Text = ($sel -replace ' \[OP\]\s*$', '') }
+        if ($script:lstPlayers.SelectedItems.Count -eq 1) {
+            $sel = $script:lstPlayers.SelectedItem
+            if ($sel) { $script:txtPlayer.Text = ($sel -replace ' \[OP\]\s*$', '') }
+        } elseif ($script:lstPlayers.SelectedItems.Count -gt 1) {
+            $script:txtPlayer.Clear()
+        }
     })
     $btnEditWhitelist.Add_Click({
         $p = Join-Path $script:serverDir 'whitelist.json'
