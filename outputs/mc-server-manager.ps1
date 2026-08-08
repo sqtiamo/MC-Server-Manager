@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.39'
+$script:appVersion = 'v2.47'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -1104,7 +1104,20 @@ function Update-FrpcView {
 }
 
 function Update-StatusBar {
-    $serverState = if (Test-ServerRunning) { '运行中' } else { '未运行' }
+    $procAlive = $script:serverProc -and -not $script:serverProc.HasExited
+    $now = [Environment]::TickCount
+    if (($now - $script:lastPortCheck) -gt 1500) {
+        $script:lastPortCheck = $now
+        $script:cachedServerRunning = Test-PortListen (Get-ServerPort)
+    }
+    $portUp = $script:cachedServerRunning
+    if ($procAlive) {
+        $serverState = if ($portUp) { '运行中' } else { '启动中' }
+    } elseif ($portUp) {
+        $serverState = '运行中'
+    } else {
+        $serverState = '未运行'
+    }
     if ($serverState -eq '运行中' -and $script:serverDir) {
         $logPath = Join-Path $script:serverDir 'logs\latest.log'
         if (Test-Path -LiteralPath $logPath) {
@@ -1112,9 +1125,44 @@ function Update-StatusBar {
             if ($age.TotalMinutes -gt 5) { $serverState = '疑似无响应' }
         }
     }
-    $frpcState = if ($script:frpcProc -and -not $script:frpcProc.HasExited) { '运行中' } else { '未运行' }
+    $frpcRunning = @(Get-FrpcProcesses)
+    $frpcState = if ($frpcRunning.Count -gt 0) { '运行中' } else { '未运行' }
     $dir = if ($script:serverDir) { $script:serverDir } else { '未选择' }
-    Set-UiStatus ("服务器[$serverState] | frpc[$frpcState] | 目录: $dir")
+    if ($script:lblServerState) {
+        $script:lblServerState.Text = "[$serverState]"
+        $script:lblServerState.ForeColor = switch ($serverState) {
+            '运行中'     { [System.Drawing.Color]::ForestGreen }
+            '启动中'     { [System.Drawing.Color]::Orange }
+            '疑似无响应' { [System.Drawing.Color]::IndianRed }
+            default      { [System.Drawing.Color]::Gray }
+        }
+    }
+    if ($script:lblFrpcState) {
+        $script:lblFrpcState.Text = "[$frpcState]"
+        $script:lblFrpcState.ForeColor = if ($frpcState -eq '运行中') { [System.Drawing.Color]::ForestGreen } else { [System.Drawing.Color]::Gray }
+    }
+    if ($script:lblStatus) { $script:lblStatus.Text = " | 目录: $dir" }
+}
+
+function Update-TunnelView {
+    if (-not $script:txtTunnelIp) { return }
+    $ip = ''
+    $cfg = $script:frpcCfg
+    if (-not $cfg -and $script:serverDir) { $cfg = Join-Path $script:serverDir 'frpc.toml' }
+    if ($cfg -and (Test-Path -LiteralPath $cfg)) {
+        $line = Get-Content -LiteralPath $cfg -Encoding UTF8 | Where-Object { $_ -match '^\s*serverAddr\s*=' } | Select-Object -First 1
+        if ($line -match '^\s*serverAddr\s*=\s*"([^"]+)"') { $ip = $matches[1] }
+    }
+    if ($script:txtTunnelIp.Text -ne $ip) { $script:txtTunnelIp.Text = $ip }
+    $running = @(Get-FrpcProcesses)
+    if ($running.Count -gt 0) {
+        $ids = ($running | ForEach-Object { $_.Id }) -join ', '
+        $port = Get-ServerPort
+        if ($ip) { $script:lblTunnelState.Text = "frpc 运行中 (PID $ids) → 玩家地址 $ip`:$port" }
+        else { $script:lblTunnelState.Text = "frpc 运行中 (PID $ids)（未读取到云服务器 IP）" }
+    } else {
+        $script:lblTunnelState.Text = 'frpc 未运行（启动后外地朋友可连）'
+    }
 }
 
 function Get-WhitelistNames {
@@ -2249,6 +2297,33 @@ function New-MainForm {
     $tabMain.Controls.Add($lblPortsTip)
     $y += 40
 
+    $lblTunnel = New-Object System.Windows.Forms.Label
+    $lblTunnel.Text = '内网穿透:'
+    $lblTunnel.Location = [System.Drawing.Point]::new(20, $y + 3)
+    $lblTunnel.Size = [System.Drawing.Size]::new(70, 22)
+    $tabMain.Controls.Add($lblTunnel)
+    $script:txtTunnelIp = New-Object System.Windows.Forms.TextBox
+    $script:txtTunnelIp.ReadOnly = $true
+    $script:txtTunnelIp.Location = [System.Drawing.Point]::new(95, $y)
+    $script:txtTunnelIp.Size = [System.Drawing.Size]::new(140, 22)
+    $tabMain.Controls.Add($script:txtTunnelIp)
+    $btnStartTunnel = New-Object System.Windows.Forms.Button
+    $btnStartTunnel.Text = '启动穿透'
+    $btnStartTunnel.Location = [System.Drawing.Point]::new(245, $y - 1)
+    $btnStartTunnel.Size = [System.Drawing.Size]::new(90, 26)
+    $tabMain.Controls.Add($btnStartTunnel)
+    $btnStopTunnel = New-Object System.Windows.Forms.Button
+    $btnStopTunnel.Text = '停止穿透'
+    $btnStopTunnel.Location = [System.Drawing.Point]::new(345, $y - 1)
+    $btnStopTunnel.Size = [System.Drawing.Size]::new(90, 26)
+    $tabMain.Controls.Add($btnStopTunnel)
+    $script:lblTunnelState = New-Object System.Windows.Forms.Label
+    $script:lblTunnelState.Location = [System.Drawing.Point]::new(445, $y + 3)
+    $script:lblTunnelState.Size = [System.Drawing.Size]::new(460, 22)
+    $script:lblTunnelState.ForeColor = [System.Drawing.Color]::Gray
+    $tabMain.Controls.Add($script:lblTunnelState)
+    $y += 36
+
     $btnStart = New-Object System.Windows.Forms.Button
     $btnStart.Text = '启动服务器'
     $btnStart.Location = [System.Drawing.Point]::new(115, $y)
@@ -2912,12 +2987,37 @@ function New-MainForm {
     $tabSsh.Controls.Add($lblSshTip)
 
     # ---------- 底部状态栏 ----------
+    $panelStatus = New-Object System.Windows.Forms.FlowLayoutPanel
+    $panelStatus.Dock = [System.Windows.Forms.DockStyle]::Bottom
+    $panelStatus.Height = 28
+    $panelStatus.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $panelStatus.WrapContents = $false
+    $panelStatus.Padding = [System.Windows.Forms.Padding]::new(6, 3, 0, 0)
+    $lblServerPrefix = New-Object System.Windows.Forms.Label
+    $lblServerPrefix.AutoSize = $true
+    $lblServerPrefix.Text = '服务器'
+    $panelStatus.Controls.Add($lblServerPrefix)
+    $script:lblServerState = New-Object System.Windows.Forms.Label
+    $script:lblServerState.AutoSize = $true
+    $script:lblServerState.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+    $script:lblServerState.Text = '[未运行]'
+    $script:lblServerState.ForeColor = [System.Drawing.Color]::Gray
+    $panelStatus.Controls.Add($script:lblServerState)
+    $lblFrpcPrefix = New-Object System.Windows.Forms.Label
+    $lblFrpcPrefix.AutoSize = $true
+    $lblFrpcPrefix.Text = ' | frpc'
+    $panelStatus.Controls.Add($lblFrpcPrefix)
+    $script:lblFrpcState = New-Object System.Windows.Forms.Label
+    $script:lblFrpcState.AutoSize = $true
+    $script:lblFrpcState.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9, [System.Drawing.FontStyle]::Bold)
+    $script:lblFrpcState.Text = '[未运行]'
+    $script:lblFrpcState.ForeColor = [System.Drawing.Color]::Gray
+    $panelStatus.Controls.Add($script:lblFrpcState)
     $script:lblStatus = New-Object System.Windows.Forms.Label
-    $script:lblStatus.Dock = [System.Windows.Forms.DockStyle]::Bottom
-    $script:lblStatus.Height = 26
-    $script:lblStatus.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $script:lblStatus.AutoSize = $true
     $script:lblStatus.Text = '就绪'
-    $form.Controls.Add($script:lblStatus)
+    $panelStatus.Controls.Add($script:lblStatus)
+    $form.Controls.Add($panelStatus)
 
     # ================= 事件 =================
     $btnBrowseDir.Add_Click({
@@ -3416,6 +3516,14 @@ function New-MainForm {
         [System.Windows.Forms.MessageBox]::Show(($msgs -join "`r`n"), '端口配置', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
         Save-Settings
     })
+    $btnStartTunnel.Add_Click({
+        Start-Frpc
+        Update-TunnelView
+    })
+    $btnStopTunnel.Add_Click({
+        Stop-Frpc
+        Update-TunnelView
+    })
 
     $btnSshScript.Add_Click({
         $dlg = New-Object System.Windows.Forms.OpenFileDialog
@@ -3475,6 +3583,7 @@ function New-MainForm {
     $timer.Add_Tick({
         Update-ConsoleView
         Update-FrpcView
+        Update-TunnelView
         Update-StatusBar
     })
     $timer.Start()
@@ -3529,6 +3638,7 @@ Match-JavaForServerDir
 Auto-MatchFrpForServerDir
 Refresh-ServerCombo
 Load-QuickConfigFromServer
+Update-TunnelView
 if (-not $script:txtMaxPlayers.Text) { $script:txtMaxPlayers.Text = "$($script:maxPlayers)" }
 $existingFrpc = @(Get-FrpcProcesses)
 if ($existingFrpc.Count -gt 0 -and -not ($script:frpcProc -and -not $script:frpcProc.HasExited)) {
