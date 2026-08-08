@@ -9,43 +9,50 @@
 set -e
 
 # ---------------- 可修改参数 ----------------
-FRP_VERSION="v0.61.1"                 # frp 版本（需和本地 frpc 兼容）
+FRP_VERSION="0.61.1"                  # frp 版本号（文件名用，不带 v；下载 tag 会自动加 v）
 BIND_PORT=7000                        # frps 监听端口（frpc 连接用）
 AUTH_TOKEN="${FRPS_TOKEN:-trainwolf2026}"   # 认证密码（可用环境变量 FRPS_TOKEN 覆盖，必须和本地 frpc.toml 一致）
 OPEN_PORTS="7000/tcp 25565/tcp 25565/udp 24454/udp"   # 需放行的端口
 
 # 下载地址（直连 + 国内镜像，逐个尝试）
 URLS=(
-  "https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
-  "https://ghfast.top/https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
-  "https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
-  "https://ghproxy.net/https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
+  "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
+  "https://ghfast.top/https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
+  "https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
+  "https://ghproxy.net/https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz"
 )
 
 echo "================ 开始安装 frps ================"
 
 # 1. 清理旧的 frps 进程（可能是之前的 screen / nohup 方式）
-if pgrep -f "frps" >/dev/null 2>&1; then
+if pgrep -x frps >/dev/null 2>&1; then
   echo "[1/6] 停止旧 frps 进程..."
-  pkill -f "frps" || true
+  pkill -x frps || true
   sleep 1
 else
   echo "[1/6] 无旧 frps 进程"
 fi
 
-# 2. 下载
-echo "[2/6] 下载 frp ${FRP_VERSION} ..."
+# 2. 准备压缩包：优先用本地上传的，否则在服务器上下载
+echo "[2/6] 准备 frp ${FRP_VERSION} 压缩包 ..."
 TMPDIR_T=$(mktemp -d)
 TARBALL=""
-for url in "${URLS[@]}"; do
-  echo "  尝试: $url"
-  if wget -q --timeout=60 -O "$TMPDIR_T/frp.tar.gz" "$url"; then
-    TARBALL="$TMPDIR_T/frp.tar.gz"
-    break
-  fi
-done
+LOCAL_ARCHIVE="$(dirname "$0")/frp_${FRP_VERSION}_linux_amd64.tar.gz"
+if [ -f "$LOCAL_ARCHIVE" ]; then
+  echo "  使用已上传的压缩包: $LOCAL_ARCHIVE"
+  TARBALL="$LOCAL_ARCHIVE"
+else
+  echo "  服务器上没有压缩包，开始下载..."
+  for url in "${URLS[@]}"; do
+    echo "  尝试: $url"
+    if wget --progress=bar:force --timeout=60 -O "$TMPDIR_T/frp.tar.gz" "$url"; then
+      TARBALL="$TMPDIR_T/frp.tar.gz"
+      break
+    fi
+  done
+fi
 if [ -z "$TARBALL" ]; then
-  echo "错误: 所有下载源都失败了，请检查服务器网络。" >&2
+  echo "错误: 没有可用压缩包（未上传且所有下载源失败），请用 send-to-server.ps1 本地下好后上传。" >&2
   rm -rf "$TMPDIR_T"
   exit 1
 fi

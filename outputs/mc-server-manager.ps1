@@ -55,7 +55,7 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.55'
+$script:appVersion = 'v2.58'
 $script:lastPortCheck = 0
 $script:cachedServerRunning = $false
 
@@ -1970,6 +1970,46 @@ function Deploy-FromScratch {
     [System.Windows.Forms.MessageBox]::Show($doneMsg, '从零部署', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 
+function Invoke-SshAction {
+    param([bool]$Exec)
+    $ip = $script:txtSshIp.Text.Trim()
+    $user = $script:txtSshUser.Text.Trim()
+    $scriptPath = $script:txtSshScript.Text.Trim()
+    $remote = $script:txtSshRemote.Text.Trim()
+    if (-not $remote) { $remote = '~/frps-install' }
+    if (-not $ip -or -not $user) {
+        [System.Windows.Forms.MessageBox]::Show('请填写服务器IP和用户名。', '提示') | Out-Null
+        return
+    }
+    if (-not $scriptPath -or -not (Test-Path -LiteralPath $scriptPath)) {
+        [System.Windows.Forms.MessageBox]::Show('请选择要上传的脚本文件。', '提示') | Out-Null
+        return
+    }
+    # 直接调用已验证可用的 send-to-server.ps1（应用目录里），在新 PowerShell 窗口运行
+    $appScriptsDir = if ($AppDir) { $AppDir } else { $PSScriptRoot }
+    $sendScript = Join-Path $appScriptsDir 'send-to-server.ps1'
+    if (-not (Test-Path -LiteralPath $sendScript)) {
+        [System.Windows.Forms.MessageBox]::Show('未找到 send-to-server.ps1（应用目录），请先重新同步应用。', '错误') | Out-Null
+        return
+    }
+    $argList = @('-ExecutionPolicy', 'Bypass', '-File', ('"' + $sendScript + '"'), '-Server', ('"' + $ip + '"'), '-User', ('"' + $user + '"'), '-Script', ('"' + $scriptPath + '"'), '-Remote', ('"' + $remote + '"'))
+    if ($script:sshToken) {
+        $argList += '-Token'
+        $argList += ('"' + $script:sshToken + '"')
+    }
+    if (-not $Exec) { $argList += '-NoExec' }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'powershell.exe'
+        $psi.Arguments = $argList -join ' '
+        $psi.UseShellExecute = $true
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+        Set-UiStatus '已打开上传窗口，请在黑色窗口输入 SSH 密码'
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show('启动上传窗口失败: ' + $_.Exception.Message, '错误') | Out-Null
+    }
+}
+
 # ---------------- 界面构建 ----------------
 function New-MainForm {
     $form = New-Object System.Windows.Forms.Form
@@ -3029,7 +3069,7 @@ function New-MainForm {
     $y += 48
 
     $lblSshTip = New-Object System.Windows.Forms.Label
-    $lblSshTip.Text = '提示：点击后会弹出黑色窗口，在窗口里输入服务器 SSH 密码即可完成传输（执行 sudo 命令时再输一次密码）。' + "`r`n" + '传输的是 scp（OpenSSH 自带），会自动创建远端专用目录并把脚本移进去。上方"frp 认证密码"仅在"上传并执行 install-frps.sh"时自动传给脚本作为 frps 的认证 token。'
+    $lblSshTip.Text = '提示：点击后会弹出 PowerShell 窗口，在窗口里输入服务器 SSH 密码即可完成传输（执行 sudo 命令时再输一次密码）。' + "`r`n" + '会自动创建远端专用目录（默认 ~/frps-install）并把脚本移进去。上方"frp 认证密码"仅在"上传并执行 install-frps.sh"时自动传给脚本作为 frps 的认证 token。'
     $lblSshTip.Location = [System.Drawing.Point]::new(20, $y)
     $lblSshTip.Size = [System.Drawing.Size]::new(800, 46)
     $lblSshTip.ForeColor = [System.Drawing.Color]::Gray
@@ -3645,49 +3685,6 @@ function New-MainForm {
         Save-Settings
     })
 
-    function Invoke-SshAction {
-        param([bool]$Exec)
-        $scp = Get-SshTool 'scp'
-        $ssh = Get-SshTool 'ssh'
-        $ip = $script:txtSshIp.Text.Trim()
-        $user = $script:txtSshUser.Text.Trim()
-        $scriptPath = $script:txtSshScript.Text.Trim()
-        $remote = $script:txtSshRemote.Text.Trim().TrimEnd('/')
-        if (-not $remote) { $remote = '~/frps-install' }
-        if (-not $scp) {
-            [System.Windows.Forms.MessageBox]::Show('未找到 scp.exe（Windows OpenSSH），无法上传。', '错误') | Out-Null
-            return
-        }
-        if (-not $ip -or -not $user) {
-            [System.Windows.Forms.MessageBox]::Show('请填写服务器IP和用户名。', '提示') | Out-Null
-            return
-        }
-        if (-not $scriptPath -or -not (Test-Path -LiteralPath $scriptPath)) {
-            [System.Windows.Forms.MessageBox]::Show('请选择要上传的脚本文件。', '提示') | Out-Null
-            return
-        }
-        $name = Split-Path -Leaf $scriptPath
-        # 先传到主目录（必然存在），再用 ssh 创建专用目录并移过去，避免污染主目录/其他项目
-        $cmdLine = '"' + $scp + '" "' + $scriptPath + '" "' + $user + '@' + $ip + ':~/"' 
-        $remoteCmd = 'mkdir -p ' + $remote + ' && mv -f ~/' + $name + ' ' + $remote + '/'
-        if ($Exec) {
-            $envPrefix = ''
-            if ($script:sshToken) {
-                $envPrefix = 'FRPS_TOKEN=' + $script:sshToken + ' '
-            }
-            $remoteCmd += ' && ' + $envPrefix + 'sudo bash ' + $remote + '/' + $name
-        }
-        $cmdLine += ' && "' + $ssh + '" "' + "$user@$ip" + '" "' + $remoteCmd + '"'
-        try {
-            # 用临时 .bat 启动，避免 Start-Process 对带引号长命令的转义问题（否则窗口会闪退/无窗口）
-            $tmpBat = Join-Path $env:TEMP ('frp-upload-' + [guid]::NewGuid().ToString('N') + '.bat')
-            $batContent = '@echo off' + "`r`n" + 'chcp 65001 >nul' + "`r`n" + $cmdLine + "`r`n" + 'pause' + "`r`n"
-            [System.IO.File]::WriteAllText($tmpBat, $batContent, (New-Object System.Text.UTF8Encoding($false)))
-            Start-Process cmd.exe -ArgumentList @('/c', "`"$tmpBat`"")
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show('启动上传窗口失败: ' + $_.Exception.Message, '错误') | Out-Null
-        }
-    }
     $btnSshUpload.Add_Click({ Invoke-SshAction -Exec $false })
     $btnSshExec.Add_Click({ Invoke-SshAction -Exec $true })
 

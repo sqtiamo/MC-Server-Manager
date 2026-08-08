@@ -44,6 +44,7 @@ $files = @(
     'outputs/setup-spark.ps1',
     'outputs/apply-server-changes.ps1',
     'outputs/rcon.py',
+    'outputs/send-to-server.ps1',
     'outputs/部署说明.md',
     'outputs/start-manager.bat'
 )
