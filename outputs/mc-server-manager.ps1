@@ -55,8 +55,10 @@ $script:frpcProc = $null
 $script:consolePos = 0
 $script:frpcPos = 0
 $script:modItems = @()
-$script:appVersion = 'v2.58'
+$script:appVersion = 'v2.61'
 $script:lastPortCheck = 0
+$script:lastRunningScan = 0
+$script:cachedRunningServer = $null
 $script:cachedServerRunning = $false
 
 # ---------------- 工具函数 ----------------
@@ -700,6 +702,67 @@ function Get-RunningOverview {
     return $lines
 }
 
+function New-RunningServerInfo {
+    param([string]$Dir)
+    $name = ''
+    if ($script:serverProfiles.ContainsKey($Dir) -and $script:serverProfiles[$Dir].name) { $name = $script:serverProfiles[$Dir].name }
+    if (-not $name) { $name = [System.IO.Path]::GetFileName($Dir.TrimEnd('\')) }
+    return @{ Name = $name; Dir = $Dir }
+}
+
+function Get-RunningServerInfo {
+    # 返回“实际在运行”的服务器：优先应用自己启动的进程，再按监听进程的 java 路径/命令行匹配档案，最后兜底按端口
+    $dirs = @($script:serverProfiles.Keys)
+    if ($script:serverDir) { $dirs = @($dirs + $script:serverDir) | Select-Object -Unique }
+
+    # 1) 应用自己启动且仍在运行的服务器优先
+    if ($script:serverProc -and -not $script:serverProc.HasExited -and $script:serverDir -and (Test-Path -LiteralPath (Join-Path $script:serverDir 'server.properties'))) {
+        $conn = Get-NetTCPConnection -LocalPort (Get-ServerPort) -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($conn -and $conn.OwningProcess -eq $script:serverProc.Id) {
+            return New-RunningServerInfo -Dir $script:serverDir
+        }
+    }
+
+    # 2) 按监听进程精确匹配：java 路径一致，或命令行包含档案目录
+    foreach ($dir in $dirs) {
+        if (-not $dir) { continue }
+        $sp = Join-Path $dir 'server.properties'
+        if (-not (Test-Path -LiteralPath $sp)) { continue }
+        $port = 25565
+        try {
+            $pl = Get-Content -LiteralPath $sp -Encoding UTF8 | Where-Object { $_ -match '^server-port\s*=' } | Select-Object -First 1
+            if ($pl) { $port = [int](($pl -split '=', 2)[1].Trim()) }
+        } catch { }
+        $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $conn) { continue }
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        if (-not $proc) { continue }
+        $profile = if ($script:serverProfiles.ContainsKey($dir)) { $script:serverProfiles[$dir] } else { $null }
+        $match = $false
+        if ($profile -and $profile.javaPath -and $proc.Path -and ($proc.Path.TrimEnd('\') -ieq $profile.javaPath.TrimEnd('\'))) { $match = $true }
+        if (-not $match) {
+            $cmd = ''
+            try { $cmd = [string]((Get-CimInstance Win32_Process -Filter "ProcessId = $($conn.OwningProcess)" -ErrorAction Stop).CommandLine) } catch { }
+            if ($cmd -and $cmd -match [regex]::Escape($dir)) { $match = $true }
+        }
+        if ($match) { return New-RunningServerInfo -Dir $dir }
+    }
+
+    # 3) 兜底：端口匹配的第一个档案
+    foreach ($dir in $dirs) {
+        if (-not $dir) { continue }
+        $sp = Join-Path $dir 'server.properties'
+        if (-not (Test-Path -LiteralPath $sp)) { continue }
+        $port = 25565
+        try {
+            $pl = Get-Content -LiteralPath $sp -Encoding UTF8 | Where-Object { $_ -match '^server-port\s*=' } | Select-Object -First 1
+            if ($pl) { $port = [int](($pl -split '=', 2)[1].Trim()) }
+        } catch { }
+        if (Test-PortListen $port) { return New-RunningServerInfo -Dir $dir }
+    }
+    return $null
+}
+
 function Find-Java21 {
     $candidates = @()
     foreach ($scanDir in @($script:javaInstallDir, 'D:\Java')) {
@@ -1135,30 +1198,27 @@ function Update-StatusBar {
         $script:lastPortCheck = $now
         $script:cachedServerRunning = Test-PortListen (Get-ServerPort)
     }
-    $portUp = $script:cachedServerRunning
-    if ($procAlive) {
-        $serverState = if ($portUp) { '运行中' } else { '启动中' }
-    } elseif ($portUp) {
-        $serverState = '运行中'
-    } else {
-        $serverState = '未运行'
+    if (($now - $script:lastRunningScan) -gt 2000) {
+        $script:lastRunningScan = $now
+        $script:cachedRunningServer = Get-RunningServerInfo
     }
-    if ($serverState -eq '运行中' -and $script:serverDir) {
-        $logPath = Join-Path $script:serverDir 'logs\latest.log'
-        if (Test-Path -LiteralPath $logPath) {
-            $age = (Get-Date) - (Get-Item -LiteralPath $logPath).LastWriteTime
-            if ($age.TotalMinutes -gt 5) { $serverState = '疑似无响应' }
-        }
+    $runningInfo = $script:cachedRunningServer
+    $serverState = '未运行'
+    if ($runningInfo) {
+        $serverState = '运行中'
+    } elseif ($procAlive) {
+        $serverState = '启动中'
     }
     $frpcRunning = @(Get-FrpcProcesses)
     $frpcState = if ($frpcRunning.Count -gt 0) { '运行中' } else { '未运行' }
     $dir = if ($script:serverDir) { $script:serverDir } else { '未选择' }
     if ($script:lblServerState) {
-        $script:lblServerState.Text = "[$serverState]"
+        $stateText = "[$serverState]"
+        if ($runningInfo) { $stateText += " $($runningInfo.Name)" }
+        $script:lblServerState.Text = $stateText
         $script:lblServerState.ForeColor = switch ($serverState) {
             '运行中'     { [System.Drawing.Color]::ForestGreen }
             '启动中'     { [System.Drawing.Color]::Orange }
-            '疑似无响应' { [System.Drawing.Color]::IndianRed }
             default      { [System.Drawing.Color]::Gray }
         }
     }

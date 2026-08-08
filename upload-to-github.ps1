@@ -67,7 +67,10 @@ if ($staged.Count -gt 0) {
         if ($ver) { $defaultMsg += " $ver" }
         $defaultMsg += ": 更新 $($staged.Count) 个文件（$fileList）"
         if (-not [Console]::IsInputRedirected) {
-            $custom = Read-Host "提交信息（直接回车用默认）: "
+            Write-Host ''
+            Write-Host '默认提交信息:'
+            Write-Host "  $defaultMsg"
+            $custom = Read-Host "提交信息（直接回车用上面的默认）"
             if ($custom -and $custom.Trim()) { $Message = $custom.Trim() }
         }
         if (-not $Message) { $Message = $defaultMsg }
